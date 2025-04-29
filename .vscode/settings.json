@@ -1,0 +1,13 @@
+{
+    "editor.tokenColorCustomizations": {
+      "textMateRules": [
+        {
+          "scope": "comment",
+          "settings": {
+            "foreground": "#ffcc24", // Replace with any color you like #24ffaf or  #79d1b1
+            "fontStyle": "italic"     // Optional: can be "italic", "bold", etc.
+          }
+        }
+      ]
+    }
+    }
