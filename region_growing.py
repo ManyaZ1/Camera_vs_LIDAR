@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 from collections import deque
+from skimage.morphology import skeletonize
+from skimage.draw import polygon2mask
+import matplotlib.pyplot as plt
 # Region growing ➔ GrabCut refinement ➔ Morphology ➔ Contour ➔ Convex Hull ➔ Midline Detection ➔ Splitting σε 2 Lanes ➔ Transparent fill
 # Load image
 path='C://Users//USER//Documents//_CAMERA_LIDAR//code//000005.png'
@@ -65,7 +68,9 @@ def grab_cut(img, initial_mask, iterations=5)-> np.ndarray:
     grabcut_mask[road_mask == 255] = cv2.GC_PR_FGD
 
     # ενισχυμένα σίγουρα foreground (στο κέντρο μόνο)
-    center_strip = road_mask[:, w//3:2*w//3]
+    #horizon=int(h*0.4)
+    horizon=0
+    center_strip = road_mask[horizon:, w//3:2*w//3]
     grabcut_mask[:, w//3:2*w//3][center_strip == 255] = cv2.GC_FGD
 
     # Models (empty, OpenCV needs them)
@@ -158,6 +163,30 @@ road_mask = cv2.dilate(road_mask, dilation_kernel, iterations=2)
 road_mask_refined = grab_cut(img, road_mask,iterations=5)
 
 cv2.imshow('GrabCut Refined Road', road_mask_refined)
+
+# Post-processing: Morphology
+contours, _ = cv2.findContours(road_mask_refined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+if not contours:
+    raise ValueError("No contours found in the mask.")
+largest_contour = max(contours, key=cv2.contourArea)
+filtered_mask = np.zeros_like(road_mask)
+cv2.drawContours(filtered_mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
+
+# Step 2: Skeletonize (get midline)
+skeleton = skeletonize((filtered_mask > 0).astype(np.uint8))
+
+# Step 3: Expand a fixed-width region around the skeleton (e.g., width 20 px)
+skeleton_coords = np.column_stack(np.where(skeleton > 0))
+dilated_skeleton = np.zeros_like(skeleton, dtype=np.uint8)
+for y, x in skeleton_coords:
+    cv2.circle(dilated_skeleton, (x, y), radius=10, color=1, thickness=-1)
+
+# Step 4: Apply the new refined mask
+refined_road_mask = (dilated_skeleton * 255).astype(np.uint8)
+
+
+cv2.imshow('Morphology Refined Road', road_mask_refined)
+
 
 #cv2.imshow('Detected Road by region growing', road_mask)
 cv2.imshow('Original Image', img)

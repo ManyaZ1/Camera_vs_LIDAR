@@ -4,8 +4,22 @@
         {
           "scope": "comment",
           "settings": {
-            "foreground": "#ffcc24", // Replace with any color you like #24ffaf or  #79d1b1
+            "foreground": "#24ffd0", // Replace with any color you like #24ffaf or  #79d1b1
             "fontStyle": "italic"     // Optional: can be "italic", "bold", etc.
+          }
+        },
+        // {
+        //   "scope": "keyword",
+        //   "settings": {
+        //     "foreground": "#ff24a1", // Replace with any color you like #ff24a1 or  #ff79d1
+        //     "fontStyle": "bold"     // Optional: can be "italic", "bold", etc.
+        //   }
+        // },
+        {
+          "scope": "variable",
+          "settings": {
+            "foreground": "#24a1ff" // Replace with any color you like #24a1ff or  #79d1ff
+            //"fontStyle": "underline"     // Optional: can be "italic", "bold", etc.
           }
         }
       ]
