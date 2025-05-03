@@ -305,7 +305,7 @@ def detect_road(img):
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     gc_mask = cv2.morphologyEx(gc_mask, cv2.MORPH_CLOSE, kernel)
     gc_mask = cv2.dilate(gc_mask, kernel, iterations=3)
-    gc_mask = cv2.bitwise_and(gc_mask, roi)
+    gc_mask = cv2.bitwise_and(gc_mask, roi) 
 
     # --- convex hull extraction ---
     big_cnt, hull = largest_hull(gc_mask)
