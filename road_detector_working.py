@@ -6,6 +6,59 @@ from skimage.draw import polygon2mask
 import matplotlib.pyplot as plt
 from curated import detect_lanes, group_lines 
 
+###### ROAD DETECTION PIPELINE ######
+# This script implements a road detection pipeline using region growing and GrabCut.
+
+# ===============================
+
+# 1. ROI Construction:
+#    - Define a trapezoid-shaped Region of Interest (ROI) to eliminate the sky.
+
+# 2. C1 Channel Preprocessing:
+''' - Compute the C1 channel: arctangent of R / max(G, B).
+    - Apply CLAHE to enhance contrast.
+    - C1 is robust to vegetation and blue sky.'''
+
+# 3. Region Growing on C1:
+#    - Start from 3 seed points near the bottom of the image.
+
+# 4. Lab Channel Preprocessing:
+''' - Apply Retinex enhancement to normalize illumination.
+    - Convert to Lab color space and extract the b* channel.
+    - Apply histogram equalization.'''
+
+# 5. Region Growing on Lab b*:
+#    - Start from the same 3 seed points.
+
+# 6. Channel Selection:
+'''    - Choose the best mask based on mean color statistics:
+      - Use Lab by default.
+      - Fall back to C1 if Lab region-growing yields green or reddish areas (vegetation warning).'''
+
+# 7. Post-Processing of the Selected Mask:
+#    - Morphological closing to fill small holes.
+#    - Dilation to expand the mask and clean edges.
+#    - Crop the mask to the ROI.
+
+# 8. GrabCut Refinement:
+#    - Use region-growing mask to initialize GrabCut:
+#      - Core → sure foreground
+#      - Rest → probable foreground
+#    - Result: refined road segmentation.
+
+# 9. Road Shape Extraction:
+#    - Find the largest contour (or merge two largest if close in area).
+#    - Compute the convex hull to obtain a clean road shape.
+
+# Visual Pipeline:
+
+#        __ C1 channel + CLAHE  \
+#       /                        \ 
+# ROI ---                         -- region growing → post-process → GrabCut → contour → convex hull
+#       \__ Lab + Retinex ______/
+
+
+
 # --- geometric helpers -------------------------------------------------------
 def build_trapezoid_roi(shape, top_ratio=0.55, bottom_ratio=0.98, widen=0.15):
     """Return a binary ROI mask shaped like a road-trapezoid."""
@@ -175,11 +228,6 @@ def post_processingv1(road_mask: np.ndarray) -> np.ndarray:
 
 
 
-
- 
-    
-
-
 def retinex_enhanced(img_bgr, sigma=40,
                      low_L_thresh=110,  # below this Retinex is engaged
                      gamma_dark=1.3,    # only for dark scenes
@@ -259,29 +307,6 @@ def detect_road(img):
         mode='c1'
     else:
         mode = 'lab'    
-
-    # # --- choose best mask based on ROI area ---
-    # def central_band_area(mask):
-    #     band = np.zeros_like(mask, dtype=np.uint8)
-    #     h, w = mask.shape
-    #     band_h_start = int(h * 0.9)
-    #     band_h_end   = h
-    #     band_w_start = int(w * 0.45)
-    #     band_w_end   = int(w * 0.55)
-    #     band[band_h_start:band_h_end, band_w_start:band_w_end] = 255
-    #     return cv2.countNonZero(cv2.bitwise_and(mask, band))
-    
-    # c1_area = central_band_area(c1_rg)
-    # print(f"[DEBUG] C1 area: {c1_area}")
-    # lab_area = central_band_area(lab_rg)
-    # print(f"[DEBUG] Lab area: {lab_area}")
-
-    # if c1_area < 300 and lab_area > c1_area:
-    #     mode = 'lab'
-    # elif lab_area < 300 and c1_area > lab_area:
-    #     mode = 'c1'
-    # else:
-    #     mode = 'lab' if lab_area > c1_area else 'c1'
 
     # --- apply selected or merged mask ---
     if mode == 'c1':
@@ -390,10 +415,11 @@ def detect_road_lab(img):
     #     cv2.drawContours(merged, cnts[:2], -1, 255, cv2.FILLED)
     #     cnts, _ = cv2.findContours(merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     #hull = cv2.convexHull(cnts[0])
-    if len(cnts) >= 2 and cv2.contourArea(cnts[1]) > 0.40 * cv2.contourArea(cnts[0]):
+    if len(cnts) >= 2 and cv2.contourArea(cnts[1]) > 0.35 * cv2.contourArea(cnts[0]):
         all_pts = np.vstack([cnts[0], cnts[1]])
     else:
         all_pts = cnts[0]
+        print("not merged")
     
     hull = cv2.convexHull(all_pts)
     
