@@ -339,18 +339,6 @@ def detect_road(img):
     cv2.destroyAllWindows()
 
 
-
-def road_imporved_c(img):
-    if improved_channel_selection(img) == "c1":
-        print("Using C1 method")
-        detect_road_c1(img)
-    else:
-        print("Using Lab method")
-        detect_road_lab(img)
-
-
-
-
 def detect_road_lab(img):
     #print(f"[INFO] Detecting road using Lab method for {img}")
     dbg = True          # set True while tuning
