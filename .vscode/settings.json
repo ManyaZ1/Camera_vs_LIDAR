@@ -4,7 +4,7 @@
         {
           "scope": "comment",
           "settings": {
-            //"foreground": "#24ffd0", // Replace with any color you like #24ffd0 or #24ffaf or  #79d1b1
+            "foreground": "#24ffd0", // Replace with any color you like #24ffd0 or #24ffaf or  #79d1b1
             "fontStyle": "italic"     // Optional: can be "italic", "bold", etc.
           }
         },
@@ -18,7 +18,7 @@
         {
           "scope": "variable",
           "settings": {
-            "foreground": "#24a1ff" // Replace with any color you like #24a1ff or  #79d1ff
+            "foreground": "#24a1ff" // Replace with any color you like #24a1ff or  #79d1ff or #ab00da
             //"fontStyle": "underline"     // Optional: can be "italic", "bold", etc.
           }
         }
