@@ -385,20 +385,18 @@ def detect_road(img,imgpath=None,debug=False):
         cv2.imshow('Road hull overlay', out)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
-    #save out in folder road_results/
     if imgpath:
-        img_name = imgpath.split('/')[-1].split('.')[0]
-        path=os.path.join('road_results', img_name+ '.png')
-        cv2.imwrite(path, out)
-        print(f"[INFO] Saved result to {path}")
-    else:
-        pass
-        #time stamp of now as random name
-        # import datetime
-        # now = datetime.datetime.now()
-        # timestamp = now.strftime("%Y%m%d_%H%M%S")
-        # path=os.path.join('road_results', f'road_{timestamp}.png')
-        # cv2.imwrite(path, out)
+        outpath = 'road_results'
+        img_name = os.path.basename(imgpath).split('.')[0]
+        os.makedirs(outpath, exist_ok=True)  # <-- απαραίτητο
+
+        path = os.path.join(outpath, img_name + '_lanes.png')
+        success = cv2.imwrite(path, out)
+
+        if success:
+            print(f"[INFO] Saved result to {path}")
+        else:
+            print(f"[ERROR] Failed to save image to {path}")
     return out, road_hull_mask, hull, gc_mask
 
 
@@ -858,7 +856,7 @@ def road_tester():
             print(f"Processing image: {filename}")
             start=time.time()
             #detect_road(image, img_path)
-            out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=None, debug=False)
+            out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=img_path, debug=False)
             split_lanes(image, road_hull_mask, hull, gc_mask,outpath='lane_results',imgpath=img_path)
             end=time.time()
             print(f"Time taken: {end-start:.2f} seconds")
@@ -876,7 +874,7 @@ def large_tester():
                 continue
             print(f"Processing image: {filename}")
             start=time.time()
-            detect_road(image, None, debug=True)
+            detect_road(image, imgpath=None, debug=True)
             #out, road_hull_mask, hull, gc_mask=detect_road(image, img_path)
             #detect_lanes(out, road_hull_mask, hull, gc_mask)
             #road_imporved_c(image)
