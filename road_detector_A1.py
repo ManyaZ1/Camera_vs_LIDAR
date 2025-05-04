@@ -58,6 +58,22 @@ import matplotlib.pyplot as plt
 #       \__ Lab + Retinex ______/
 
 
+###### LANE DETECTION PIPELINE ######
+
+#TO DO: UPDATE LANE DETECTION! 
+# fast lane detection -> works only for two lanes
+# 1. Convert the image to grayscale and apply Gaussian blur.    
+# 2. Use Canny edge detection to find edges in the image.
+# 3. Create a mask for the region of interest (ROI) using the road hull mask.
+# 4. Apply Hough Transform to detect lines in the masked edges.
+# 5. Find the line closest to the center of the road                                           
+#    - Use the cross product to determine if a point is left or right of the center line.
+# 6. Create left and right masks based on the detected line.
+
+# gray → blur → Canny → mask → Hough Transform → line detection → left/right masks
+
+
+
 ##################################################### ROAD DETECTION PIPELINE #######################################################
 
 # --- geometric helpers -------------------------------------------------------

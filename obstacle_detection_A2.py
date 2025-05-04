@@ -23,3 +23,11 @@
 'Για κάθε cluster, υπολόγισε το 2D bounding box από τα σημεία του.'
 
 'Προέβαλέ το στην εικόνα αν θέλεις visual feedback.'
+
+## PIPELINE 2 ##
+#1.pre process
+#2.stereo camera calibration
+#3.Road Surface Detection with ransac
+#4.cluster with dbscan
+#5.bounding box projection ?
+#6.visualization
