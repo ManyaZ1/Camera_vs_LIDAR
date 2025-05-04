@@ -611,6 +611,11 @@ def split_lanes(image, road_hull_mask, hull, gc_mask,outpath=None,imgpath=None):
             print(f"[INFO] Saved result to {path}")
         else:
             print(f"[ERROR] Failed to save image to {path}")
+    else:
+        cv2.line(blended, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        cv2.imshow("lane split semi-transparent", blended)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()        
 
     # if outpath:
     #     img_name = imgpath.split('/')[-1].split('.')[0]
@@ -888,15 +893,15 @@ if __name__ == "__main__":
     import os
     import time
     
-    road_tester()
+    #road_tester()
     #large_tester()
-    # imgpath=os.path.join(os.getcwd(), '003594.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
-    # image = cv2.imread(imgpath)
-    # if image is None:
-    #     print("Error loading image")
+    imgpath=os.path.join(os.getcwd(), 'hardtester/003594.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
+    image = cv2.imread(imgpath)
+    if image is None:
+        print("Error loading image")
     #     exit(1)
-    # out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=None, debug=False)
-    # split_lanes(image, road_hull_mask, hull, gc_mask,out=None)
+    out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=None, debug=False)
+    split_lanes(image, road_hull_mask, hull, gc_mask)
     #detect_lanes(image, road_hull_mask, hull, gc_mask,out)
     #detect_lanes_colored(image, road_hull_mask, hull, gc_mask, out=None)
     #detect_lanes_og(image)

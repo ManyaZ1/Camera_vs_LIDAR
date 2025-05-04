@@ -1,3 +1,4 @@
 lane_results/*.png
 road_results/*.png
+hardtester/*.png
 __pycache__/*
