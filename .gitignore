@@ -4,3 +4,4 @@ hardtester/*.png
 __pycache__/*
 settings.json
 .vscode/settings.json
+.vscode/settings.json
