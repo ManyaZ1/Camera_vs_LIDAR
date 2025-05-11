@@ -911,12 +911,12 @@ if __name__ == "__main__":
     
     #road_tester()
     #large_tester()
-    imgpath=os.path.join(os.getcwd(), 'hardtester/003594.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
+    imgpath=os.path.join(os.getcwd(), 'hardtester/000313.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
     image = cv2.imread(imgpath)
     if image is None:
         print("Error loading image")
     #     exit(1)
-    out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=None, debug=False)
+    out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=None, debug=True)
     split_lanes(image, road_hull_mask, hull, gc_mask)
     #detect_lanes(image, road_hull_mask, hull, gc_mask,out)
     #detect_lanes_colored(image, road_hull_mask, hull, gc_mask, out=None)
