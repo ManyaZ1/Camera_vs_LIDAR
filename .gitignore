@@ -5,3 +5,7 @@ __pycache__/*
 settings.json
 .vscode/settings.json
 .vscode/settings.json
+coco.names
+testyolo.py
+yolov3.cfg
+yolov3.weights
