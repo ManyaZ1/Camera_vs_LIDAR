@@ -9,6 +9,8 @@ Workflow
 3) GrabCut takes the coarse mask + colour image and sharpens the road boundaries.
 4) Overlay = road (blue translucent) + YOLO boxes (red).
 
+# TODO
+- [ ] Make more trapezoidal.
 """
 
 import argparse
