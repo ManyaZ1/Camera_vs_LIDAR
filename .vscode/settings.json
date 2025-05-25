@@ -18,7 +18,7 @@
       {
         "scope": "variable",
         "settings": {
-          //"foreground": "#24a1ff" // Replace with any color you like #24a1ff or  #79d1ff or #ab00da
+          "foreground": "#24a1ff" // Replace with any color you like #24a1ff or  #79d1ff or #ab00da
           //"fontStyle": "underline"     // Optional: can be "italic", "bold", etc.
         }
       }

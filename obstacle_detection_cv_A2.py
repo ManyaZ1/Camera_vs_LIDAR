@@ -89,15 +89,6 @@ def parse_kitti_calib1(calib_path):
     
     return Q
 
-
-def filter_by_height(points, plane_model, threshold=0.3):
-    a, b, c, d = plane_model
-    numerator = np.abs(a * points[:, 0] + b * points[:, 1] + c * points[:, 2] + d)
-    denominator = np.sqrt(a**2 + b**2 + c**2)
-    dist = numerator / denominator
-    return points[dist > threshold], dist > threshold
-
-
 def compute_disparity_map(left_img, right_img):
     left_gray = cv2.cvtColor(left_img, cv2.COLOR_BGR2GRAY)
     right_gray = cv2.cvtColor(right_img, cv2.COLOR_BGR2GRAY)
@@ -324,10 +315,26 @@ def obstacle_detection(frame_id="um_000040"):
     cv2.imshow("Disparity", disp_vis)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
+def run_on_all_frames():
+    calib_path = 'C:\\Users\\USER\\Documents\\_CAMERA_LIDAR\\data_road\\training\\calib'
+    for filename in os.listdir(calib_path):
+        if filename.endswith(".txt"):
+            frame_id = os.path.splitext(filename)[0]
+            print(f"[INFO] Processing frame: {frame_id}")
+            try:
+                obstacle_detection(frame_id)
+            except Exception as e:
+                print(f"[ERROR] Failed to process {frame_id}: {e}")
+
+
 if __name__ == "__main__":
     from road_detector_A1 import overlay_hull
+    #run_on_all_frames()
     #main_badram()
+    names=["um_000040","um_000072"]
     name="uu_000081"
-    obstacle_detection(frame_id=name)
+    for name in names:
+        obstacle_detection(frame_id=name)
 
 
