@@ -5,7 +5,7 @@
 - **Python** (version 3.12.9): https://www.python.org/downloads/  
 - **Git Bash** (optional): For cloning the repository easily.
 
-## Current Progres
+## Current Progress
 
 ## Part A
 ### Questions 1 and 2
