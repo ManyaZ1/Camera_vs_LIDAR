@@ -138,7 +138,7 @@ def refine(mask, k=5, iters=2):
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN,  kernel, iterations=iters)
     return m
 
-# ───────────── GrabCut refinement ───────────── #
+# ───────────── GrabCut refinement (not used) ───────────── #
 
 def build_grabcut_mask_from_road_mask(road_mask: np.ndarray, strong_ratio=0.1):
     h, w = road_mask.shape
@@ -171,10 +171,66 @@ def find_largest_contour(road_mask: np.ndarray):
     largest = max(cnts, key=cv2.contourArea)
     mask_largest = np.zeros_like(road_mask)
     cv2.drawContours(mask_largest, [largest], -1, 255, thickness=cv2.FILLED)
-    return mask_largest
-       
+    return mask_largest, largest
 
-#    - Compute the convex hull to obtain a clean road shape.
+# Approximate the contour to a 4-point polygon and fill it      
+def contour_to_quad(mask, contour, epsilon_ratio=0.02):
+    # simplify → 4-vertex polygon
+    peri = cv2.arcLength(contour, closed=True)
+    approx = cv2.approxPolyDP(contour, epsilon_ratio * peri, closed=True)
+
+    # if we didn’t get 4 vertices, force it with convex-hull → polyDP once more
+    if len(approx) != 4:
+        hull = cv2.convexHull(contour)
+        approx = cv2.approxPolyDP(hull, epsilon_ratio * peri, closed=True)
+        if len(approx) > 4:                        # still too many
+            approx = approx[:4]
+
+    quad_mask = np.zeros_like(mask)
+    cv2.fillPoly(quad_mask, [approx], 255)
+    return quad_mask
+'''usage notes: 
+after mask_largest = find_largest_contour(road_mask):
+quad_mask   = contour_to_quad(road_mask, mask_largest)
+vis_quad    = overlay(left, quad_mask, bxs, labels)
+cv2.imshow("Trapezoid road", vis_quad)
+'''
+# Build a “vanishing-point trapezoid” from the contour’s top and bottom edges
+def trapezoid_from_contour(mask, contour):
+    pts = contour.reshape(-1, 2)
+    h = mask.shape[0]
+
+    # Try to extract top and bottom bands
+    top_band = pts[pts[:, 1] < h * 0.3]
+    bottom_band = pts[pts[:, 1] > h * 0.7]
+
+    # Fallback if bands are empty
+    if len(top_band) < 2 or len(bottom_band) < 2:
+        print("[WARN] Not enough points in bands — fallback to full contour")
+        top_band = bottom_band = pts
+
+    try:
+        tl = top_band[top_band[:, 0].argmin()]
+        tr = top_band[top_band[:, 0].argmax()]
+        bl = bottom_band[bottom_band[:, 0].argmin()]
+        br = bottom_band[bottom_band[:, 0].argmax()]
+    except ValueError:
+        print("[ERROR] Trapezoid could not be formed — skipping")
+        return np.zeros_like(mask)
+
+    trap = np.array([tl, tr, br, bl]).reshape(-1, 1, 2)
+    trap_mask = np.zeros_like(mask)
+    cv2.fillPoly(trap_mask, [trap], 255)
+    return trap_mask
+
+
+'''usage notes: 
+after mask_largest = find_largest_contour(road_mask):
+trap_mask = trapezoid_from_contour(road_mask, mask_largest)
+vis_trap  = overlay(left, trap_mask, bxs, labels)
+cv2.imshow("Vanishing-point trapezoid", vis_trap)
+'''
+# Compute the convex hull to obtain a clean road shape. (not good results)
 
 # ───────────────────── Overlay helper ───────────────────── #
 
@@ -230,7 +286,19 @@ def process(idx: str, args):
     road_mask = refine(road_mask, k=5, iters=2)
 
     # 6. Find the largest contour (or merge two largest if close in area)
-    mask_largest = find_largest_contour(road_mask)
+    mask_largest,contour = find_largest_contour(road_mask)
+
+    # quad
+    quad_mask   = contour_to_quad(road_mask, contour)
+    vis_quad    = overlay(left, quad_mask, bxs, labels)
+    cv2.imshow("Trapezoid road", vis_quad)
+
+    # vanishing-point trapezoid
+    trap_mask = trapezoid_from_contour(road_mask, contour)
+    vis_trap  = overlay(left, trap_mask, bxs, labels)
+    cv2.imshow("Vanishing-point trapezoid", vis_trap)
+
+
     vis_largest = overlay(left, mask_largest, bxs, labels)
     cv2.imshow("RANSAC+LargestContourOnly", vis_largest)
 
@@ -239,6 +307,9 @@ def process(idx: str, args):
     
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
+
+
 
 # ───────────────────────────── Runner ───────────────────────────── #
 

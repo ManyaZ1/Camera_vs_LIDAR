@@ -12,7 +12,18 @@
 yolo_ransac_grabcut.py
 
 **TO DO**
-1. make mask more trapezoidal 
+1. make mask more trapezoidal => improve the functions
 2. add lanes
 
+## Part B
+### Question 1
+best version test_con.py and test2
 
+**TO DO**
+1. IMPORVE ROAD SEGMENTATION
+
+**REJECTED**
+```
+2. piecewise_ransac❌ 
+3. Normal Vector Consistency ❌
+```
