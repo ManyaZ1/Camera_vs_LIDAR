@@ -23,7 +23,7 @@ best version test_con.py and test2
 1. IMPORVE ROAD SEGMENTATION
 1.i. keep road center (contour that has part of it in th middle of the picture is the road)
 1.ii PCA sta normals, read paper for pothole detection https://ieeexplore.ieee.org/document/10311086, 
-2. B2 = NON CONNECTED CLUSTERS  
+2. B2 = NON CONNECTED CLUSTERS kai DBSCAN  
 
 **REJECTED**
 ```
