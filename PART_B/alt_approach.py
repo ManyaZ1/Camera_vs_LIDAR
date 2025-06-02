@@ -5,6 +5,11 @@ from sklearn.cluster import DBSCAN
 import cv2
 from pathlib import Path
 import argparse
+
+
+LOCAL_HEIGHT_TRESHOLD = 0.1 # adaptive_height_filtering
+HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
+
 def get_args():
     p = argparse.ArgumentParser("KITTI Velodyne viewer + road RANSAC")
     p.add_argument("--velodyne_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_velodyne/training/velodyne")
@@ -25,7 +30,8 @@ def pc_to_o3d(xyz):
 def multi_plane_ransac(pcd, max_planes=3, dist_thresh=0.1, min_points=100):
     '''Find multiple ground planes using iterative RANSAC'''
     points = np.asarray(pcd.points)
-    remaining_indices = set(range(len(points)))
+    remaining_indices = set(range(len(points))) 
+    # all integer indices of points
     planes = []
     
     for _ in range(max_planes):
@@ -33,22 +39,23 @@ def multi_plane_ransac(pcd, max_planes=3, dist_thresh=0.1, min_points=100):
             break
             
         # Create sub-cloud from remaining points
-        sub_indices = list(remaining_indices)
+        sub_indices = list(remaining_indices) # initially all points
         sub_pcd = o3d.geometry.PointCloud()
         sub_pcd.points = o3d.utility.Vector3dVector(points[sub_indices])
         
         # RANSAC on sub-cloud
-        plane, inliers = sub_pcd.segment_plane(
+        plane, inliers = sub_pcd.segment_plane( 
             distance_threshold=dist_thresh, 
             ransac_n=3, 
             num_iterations=1000
-        )
+        )  # plane: ax + by + cz + d = 0 
+        # inliers: list of integers: Each is the index of a point in the input point cloud (pcd.points) that lies close enough to the plane, i.e., within distance_threshold.
         
         if len(inliers) < min_points:
             break
         
         # Convert back to original indices
-        original_inliers = [sub_indices[i] for i in inliers]
+        original_inliers = [sub_indices[i] for i in inliers] # because inliers are indices of sub_pcd, we need to map them back to the original point cloud
         planes.append((plane, original_inliers))
         
         # Remove found inliers from remaining points
@@ -57,7 +64,8 @@ def multi_plane_ransac(pcd, max_planes=3, dist_thresh=0.1, min_points=100):
     return planes
 
 def adaptive_height_filtering(points, grid_size=1.0, percentile=10):
-    '''Adaptive height filtering based on local ground level'''
+    '''Adaptive height filtering based on local ground level
+    Makes use of a 2D grid to estimate local ground height and filters points that are too high above it.'''
     if len(points) == 0:
         return np.array([]).reshape(0, 3)
     
@@ -101,29 +109,34 @@ def adaptive_height_filtering(points, grid_size=1.0, percentile=10):
     filtered_indices = []
     for idx, (x, y, z) in enumerate(points):
         local_ground = ground_levels[x_idx[idx], y_idx[idx]]
-        if not np.isnan(local_ground) and (z - local_ground) < 0.3:  # 30cm above local ground
+        if not np.isnan(local_ground) and (z - local_ground) < LOCAL_HEIGHT_TRESHOLD:  # 10cm above local ground
             filtered_indices.append(idx)
     
     return points[filtered_indices]
 
+
 def road_continuity_filter(points, search_radius=2.0, min_neighbors=5):
-    '''Filter points based on road continuity'''
+    '''Filter points based on road continuity
+    Keep only the points that:
+        1. Have enough nearby neighbors (within a radius)
+        2. Whose neighbors lie roughly on the same horizontal surface (low Z variation)'''
+    
     if len(points) < min_neighbors:
         return points
     
-    tree = cKDTree(points[:, :2])  # 2D spatial tree
+    tree = cKDTree(points[:, :2])  # 2D spatial tree #Fast lookup structure to find neighbors in the horizontal plane
     valid_indices = []
     
     for i, point in enumerate(points):
         # Find neighbors in 2D
-        neighbors = tree.query_ball_point(point[:2], search_radius)
+        neighbors = tree.query_ball_point(point[:2], search_radius) #For each point, find its 2D neighbors within search_radius
         
         if len(neighbors) >= min_neighbors:
             neighbor_points = points[neighbors]
             
             # Check height consistency
-            height_std = np.std(neighbor_points[:, 2])
-            if height_std < 0.2:  # Low height variation indicates road
+            height_std = np.std(neighbor_points[:, 2]) # standard deviation of Z values of neighbors
+            if height_std < HEIGHT_VARIATION_THRESHOLD:  # Low height variation indicates road
                 valid_indices.append(i)
     
     return points[valid_indices]
@@ -217,7 +230,7 @@ def process_frame_improved(bin_path, args):
     if road_clusters:
         main_road = max(road_clusters, key=len)
         # Apply tighter lateral crop to main road
-        main_road = main_road[np.abs(main_road[:, 1]) < 6.0]
+        main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
     else:
         main_road = np.array([]).reshape(0, 3)
     
