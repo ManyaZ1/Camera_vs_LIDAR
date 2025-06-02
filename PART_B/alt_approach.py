@@ -257,9 +257,18 @@ def process_frame_improved(bin_path, args):
                 cv2.circle(img, (u, v), 3, (0, 0, 255), -1)  # Red
     
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
-    cv2.imshow('Improved Road Detection', img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #cv2.imshow('Improved Road Detection', img)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
+    #save to directory alt_approach
+    #get cuurrent directory
+    script_dir= Path(__file__).parent
+    #create output directory if not exists
+    output_dir = script_dir / "alt_approach"
+    output_dir.mkdir(exist_ok=True)
+    #save image
+    output_img_path = output_dir / f"{frame}_road_detection.png"
+    cv2.imwrite(str(output_img_path), img)
     
     return main_road, obstacles
 
