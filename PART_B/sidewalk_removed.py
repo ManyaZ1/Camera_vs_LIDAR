@@ -5,7 +5,8 @@ from sklearn.cluster import DBSCAN
 import cv2
 from pathlib import Path
 import argparse
-
+from sklearn.decomposition import PCA
+from scipy.spatial import cKDTree
 
 LOCAL_HEIGHT_TRESHOLD = 0.1 # adaptive_height_filtering
 HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
@@ -187,6 +188,60 @@ def detect_obstacles(all_points, road_points, height_threshold=0.5, min_cluster_
     
     return np.array(obstacle_points)
 
+#sidewalk
+
+def compute_normals(points, radius=0.3):
+    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+    pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30))
+    return np.asarray(pcd.normals)
+
+def find_curb_by_normals(points, verticality_thresh=0.1):
+    '''normal close to 0 means the point is on a curb(vertical surface)'''
+    normals = compute_normals(points)
+    verticality = np.abs(normals[:, 2])
+    curb_mask = verticality < verticality_thresh
+    return curb_mask
+
+def detect_curb_by_height_discontinuity(points, radius=0.25, z_jump_thresh=0.12):
+    """
+    Returns a boolean mask of points that are near vertical discontinuities in z.
+    """
+    from scipy.spatial import cKDTree
+    mask = np.zeros(len(points), dtype=bool)
+    kdt = cKDTree(points[:, :2])
+    for i, p in enumerate(points):
+        idx = kdt.query_ball_point(p[:2], radius)
+        if len(idx) < 3:
+            continue
+        local_z = points[idx, 2]
+        if local_z.max() - local_z.min() > z_jump_thresh:
+            mask[i] = True
+    return mask
+
+def pca_high_variation_mask(points, radius=0.3, z_variance_thresh=0.002):
+    """
+    Return a boolean mask of points with high vertical roughness in local patch.
+    Useful for excluding curb-like areas from road points.
+    """
+    kdt = cKDTree(points[:, :2])
+    high_variance_mask = np.zeros(len(points), dtype=bool)
+    
+    for i, p in enumerate(points):
+        idx = kdt.query_ball_point(p[:2], radius)
+        #print(f"Point {i}: {len(idx)} neighbors")
+
+
+
+        if len(idx) < 5:
+            continue
+        patch = points[idx]
+        pca = PCA(n_components=3).fit(patch)
+        #print(f"λ3 = {pca.explained_variance_[2]:.5f}")
+        # The 3rd eigenvalue (variance) is largest if there's a jump/step
+        if pca.explained_variance_[2] > z_variance_thresh:
+            high_variance_mask[i] = True
+    return high_variance_mask
+
 def process_frame_improved(bin_path, args):
     frame = bin_path.stem
     img_path = Path(args.image_dir) / f"{frame}.png"
@@ -220,13 +275,27 @@ def process_frame_improved(bin_path, args):
         all_ground_indices.extend(indices)
     
     candidate_points = np.asarray(pcd.points)[all_ground_indices]
+
+
+    #curb_mask = detect_curb_by_height_discontinuity(candidate_points)
+    #road_candidates = candidate_points[~curb_mask]
+
+    # curb_mask = find_curb_by_normals(candidate_points)
+    # road_candidates = candidate_points[~curb_mask]  # Keep only non-curb-like
+    #curb_points = candidate_points[curb_mask]
     
     # Adaptive height filtering
     road_candidates = adaptive_height_filtering(candidate_points, grid_size=0.8)
     
+    #PCA
+    rough_mask = pca_high_variation_mask(road_candidates, radius=0.5, z_variance_thresh=0.0001)
+    rough_points = road_candidates[rough_mask]        # ✅ SAME input
+    road_candidates = road_candidates[~rough_mask]
+  
     # Road continuity filtering
-    road_points = road_continuity_filter(road_candidates, search_radius=1.5, min_neighbors=8)
-    
+    #road_points = road_continuity_filter(road_candidates, search_radius=1.5, min_neighbors=8)
+    road_points=road_candidates
+
     # Cluster road segments
     road_clusters = cluster_road_segments(road_points, eps=1.5, min_samples=15)
     
@@ -238,6 +307,10 @@ def process_frame_improved(bin_path, args):
     else:
         main_road = np.array([]).reshape(0, 3)
     
+    curb_mask = find_curb_by_normals(main_road)
+    main_road = main_road[~curb_mask]  # Keep only non-curb-like
+
+
     # Detect obstacles
     obstacles = detect_obstacles(np.asarray(pcd.points), main_road, 
                                height_threshold=0.4, min_cluster_size=3)
@@ -259,16 +332,28 @@ def process_frame_improved(bin_path, args):
         for u, v in obs_uv:
             if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
                 cv2.circle(img, (u, v), 3, (0, 0, 255), -1)  # Red
-    
+
+    rough_uv = project(rough_points, proj)
+    for u, v in rough_uv:
+        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+            cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
+
+    # # Optional: visualize curb faces (green)
+    # if 'curb_points' in locals() and len(curb_points) > 0:
+    #     curb_uv = project(curb_points, proj)
+    #     for u, v in curb_uv:
+    #         if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+    #             cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
+
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
-    #cv2.imshow('Improved Road Detection', img)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
+    # cv2.imshow('Improved Road Detection', img)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
     #save to directory alt_approach
     #get cuurrent directory
     script_dir= Path(__file__).parent
     #create output directory if not exists
-    output_dir = script_dir / "alt_approach"
+    output_dir = script_dir / "sidewalk"
     output_dir.mkdir(exist_ok=True)
     #save image
     output_img_path = output_dir / f"{frame}_road_detection.png"
