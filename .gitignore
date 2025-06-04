@@ -11,7 +11,6 @@ yolov3.cfg
 yolov3.weights
 Cooperative_Saliency-Based_Pothole_Detection_and_AR_Rendering_for_Increased_Situational_Awareness.pdf
 /PART_B/alt_approach
-/PART_B/spatial_context_approach
 /PART_B/sidewalk
 /PART_B/B1B2
 /PART_B/sidewalk_removal
@@ -21,3 +20,9 @@ Cooperative_Saliency-Based_Pothole_Detection_and_AR_Rendering_for_Increased_Situ
 /PART_B/enhanced_detection
 PART_B/__pycache__/classigy.cpython-311.pyc
 /PART_B/B1B2clean
+/PART_B/tests/alt_approach
+/PART_B/tests/sidewalk
+/PART_B/tests/sidewalkv3
+/PART_B/tests/B1B2_improved
+/PART_B/tests/enhanced_detection
+/PART_B/tests/sidewalk_removal

@@ -400,9 +400,9 @@ def process_frame_improved(bin_path, args):
    
 
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
-    #cv2.imshow('Improved Road Detection', img)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
+    cv2.imshow('Improved Road Detection', img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
     
     #get cuurrent directory
     script_dir= Path(__file__).parent

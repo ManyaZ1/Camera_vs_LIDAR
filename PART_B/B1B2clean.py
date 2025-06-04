@@ -517,16 +517,16 @@ def process_frame_improved(bin_path, args):
             draw_distance_text(img, center_2d, distance, color)
 
     # Draw curbs
-    left_uv = project(left_rough, proj)
-    right_uv = project(right_rough, proj)
+    # left_uv = project(left_rough, proj)
+    # right_uv = project(right_rough, proj)
 
-    for u, v in left_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
+    # for u, v in left_uv:
+    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+    #         cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
     
-    for u, v in right_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
+    # for u, v in right_uv:
+    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+    #         cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
 
     # Add legend
     draw_legend(img)
