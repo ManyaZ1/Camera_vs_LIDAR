@@ -23,5 +23,8 @@
         }
       }
     ]
-  }
+  },
+  "python.analysis.extraPaths": [
+    "./PART_B"
+  ]
   }
