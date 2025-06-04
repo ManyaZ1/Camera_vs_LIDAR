@@ -7,25 +7,7 @@ from pathlib import Path
 import argparse
 from sklearn.decomposition import PCA
 from scipy.spatial import cKDTree
-import sys
-from pathlib import Path
 
-# Make sure Python sees the pointnet folder
-sys.path.append(str(Path(__file__).parent))
-
-from pointnet.model import PointNetCls
-import torch
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# Load pretrained weights from correct folder
-pointnet_model = PointNetCls(k=40).to(device)
-model_path = Path(__file__).parent / "cls" / "pointnet_model.pth"
-pointnet_model.load_state_dict(
-    torch.load(model_path, map_location=device, weights_only=False)
-)
-#pointnet_model.load_state_dict(torch.load('cls/pointnet_model.pth', map_location=device))
-pointnet_model.eval()
 LOCAL_HEIGHT_TRESHOLD = 0.1 # adaptive_height_filtering
 HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
 
@@ -206,6 +188,129 @@ def detect_obstacles(all_points, road_points, height_threshold=0.5, min_cluster_
     
     return np.array(obstacle_points)
 
+def cluster_obstacles(obstacle_points, eps=0.8, min_samples=5):
+    '''Cluster obstacle points into individual objects'''
+    if len(obstacle_points) < min_samples:
+        return []
+    
+    clustering = DBSCAN(eps=eps, min_samples=min_samples)
+    labels = clustering.fit_predict(obstacle_points)
+    
+    clusters = []
+    for label in set(labels):
+        if label != -1:  # Ignore noise points
+            cluster_points = obstacle_points[labels == label]
+            if len(cluster_points) >= min_samples:
+                clusters.append(cluster_points)
+    
+    return clusters
+
+def get_distance_color(distance):
+    '''Get color based on distance (closer = more red, farther = more green)'''
+    if distance < 5:
+        return (0, 0, 255)  # Red - very close
+    elif distance < 10:
+        return (0, 100, 255)  # Orange-red
+    elif distance < 15:
+        return (0, 165, 255)  # Orange
+    elif distance < 20:
+        return (0, 255, 255)  # Yellow
+    elif distance < 30:
+        return (100, 255, 100)  # Light green
+    else:
+        return (0, 255, 0)  # Green - far
+
+def draw_3d_bounding_box(img, points_3d, proj, color=(0, 255, 0), thickness=2):
+    '''Draw 3D bounding box on image'''
+    if len(points_3d) == 0:
+        return
+    
+    # Calculate bounding box in 3D
+    min_vals = np.min(points_3d, axis=0)
+    max_vals = np.max(points_3d, axis=0)
+    
+    # Define 8 corners of the bounding box
+    corners_3d = np.array([
+        [min_vals[0], min_vals[1], min_vals[2]],  # 0
+        [max_vals[0], min_vals[1], min_vals[2]],  # 1
+        [max_vals[0], max_vals[1], min_vals[2]],  # 2
+        [min_vals[0], max_vals[1], min_vals[2]],  # 3
+        [min_vals[0], min_vals[1], max_vals[2]],  # 4
+        [max_vals[0], min_vals[1], max_vals[2]],  # 5
+        [max_vals[0], max_vals[1], max_vals[2]],  # 6
+        [min_vals[0], max_vals[1], max_vals[2]]   # 7
+    ])
+    
+    # Project 3D corners to 2D
+    corners_2d = project_all_points(corners_3d, proj, img.shape)
+    
+    if len(corners_2d) < 8:
+        return  # Not enough visible corners
+    
+    # Draw bottom face (z = min)
+    bottom = [0, 1, 2, 3, 0]
+    for i in range(len(bottom) - 1):
+        pt1 = tuple(corners_2d[bottom[i]])
+        pt2 = tuple(corners_2d[bottom[i + 1]])
+        cv2.line(img, pt1, pt2, color, thickness)
+    
+    # Draw top face (z = max)
+    top = [4, 5, 6, 7, 4]
+    for i in range(len(top) - 1):
+        pt1 = tuple(corners_2d[top[i]])
+        pt2 = tuple(corners_2d[top[i + 1]])
+        cv2.line(img, pt1, pt2, color, thickness)
+    
+    # Draw vertical edges
+    for i in range(4):
+        pt1 = tuple(corners_2d[i])
+        pt2 = tuple(corners_2d[i + 4])
+        cv2.line(img, pt1, pt2, color, thickness)
+
+def project_all_points(pts, P, img_shape):
+    '''Project 3D points to image coordinates, return only valid points'''
+    if len(pts) == 0:
+        return np.array([]).reshape(0, 2)
+    
+    h = np.hstack([pts, np.ones((len(pts), 1))])
+    uvw = (P @ h.T).T
+    z = uvw[:, 2]
+    valid = z > 0
+    
+    uv = np.zeros((len(pts), 2), dtype=int)
+    if np.any(valid):
+        uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
+        
+        # Filter points within image bounds
+        img_valid = ((uv[:, 0] >= 0) & (uv[:, 0] < img_shape[1]) & 
+                    (uv[:, 1] >= 0) & (uv[:, 1] < img_shape[0]))
+        final_valid = valid & img_valid
+        
+        return uv[final_valid]
+    
+    return np.array([]).reshape(0, 2)
+
+def draw_distance_text(img, center_2d, distance, color):
+    '''Draw distance text near the bounding box'''
+    text = f"{distance:.1f}m"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness = 2
+    
+    # Get text size
+    (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
+    
+    # Position text above the center
+    text_x = max(0, center_2d[0] - text_width // 2)
+    text_y = max(text_height, center_2d[1] - 10)
+    
+    # Draw background rectangle for better visibility
+    cv2.rectangle(img, (text_x - 2, text_y - text_height - 2), 
+                  (text_x + text_width + 2, text_y + 2), (0, 0, 0), -1)
+    
+    # Draw text
+    cv2.putText(img, text, (text_x, text_y), font, font_scale, color, thickness)
+
 #sidewalk
 def filter_clusters_by_size(points, eps=0.8, min_samples=10, min_cluster_size=350):
     if len(points) < min_samples:
@@ -220,12 +325,14 @@ def filter_clusters_by_size(points, eps=0.8, min_samples=10, min_cluster_size=35
         if len(cluster) >= min_cluster_size:
             clusters.append(cluster)
     return clusters
+
 def count_clusters(points, eps=0.8, min_samples=8):
     if len(points) < min_samples:
         return 0
     labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(points[:, :2])
     num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     return num_clusters
+
 def compute_normals(points, radius=0.3):
     pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
     pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30))
@@ -264,12 +371,10 @@ def pca_high_variation_mask(points, radius=0.3, z_variance_thresh=0.002):
     
     for i, p in enumerate(points):
         idx = kdt.query_ball_point(p[:2], radius) 
-        #print(f"Point {i}: {len(idx)} neighbors")
         if len(idx) < 5:
             continue
         patch = points[idx]
         pca = PCA(n_components=3).fit(patch)
-        #print(f"λ3 = {pca.explained_variance_[2]:.5f}")
         # The 3rd eigenvalue (variance) is largest if there's a jump/step
         if pca.explained_variance_[2] > z_variance_thresh:
             high_variance_mask[i] = True
@@ -292,8 +397,6 @@ def get_largest_cluster(points, eps=0.5, min_samples=10):
     # Get label with most points
     biggest_label = np.bincount(labels).argmax()
     return points[labels == biggest_label]
-
-
 
 def process_frame_improved(bin_path, args):
     frame = bin_path.stem
@@ -332,70 +435,49 @@ def process_frame_improved(bin_path, args):
     # Adaptive height filtering
     road_candidates = adaptive_height_filtering(candidate_points, grid_size=0.8)
     
-    #PCA before road cluster version (finds walls outside the road mask)
-    '''# rough_mask = pca_high_variation_mask(road_candidates, radius=0.5, z_variance_thresh=0.0001)
-    # rough_points = road_candidates[rough_mask]        # ✅ SAME input
-    # road_candidates = road_candidates[~rough_mask]'''
-  
-    # Road continuity filtering (not needed)
-    #road_points = road_continuity_filter(road_candidates, search_radius=1.5, min_neighbors=8)
-
-    road_points=road_candidates
+    road_points = road_candidates
 
     # Cluster road segments
     road_clusters = cluster_road_segments(road_points, eps=1.5, min_samples=15)
     
     # Select the largest cluster as the main road
-
     if road_clusters:
         main_road = max(road_clusters, key=len)
         main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
 
-        pca_curb_mask = pca_high_variation_mask(main_road, radius=0.3,  z_variance_thresh=0.0001) #radius=.5
-        rough_points  = main_road[pca_curb_mask]      # yellow
-        main_road     = main_road[~pca_curb_mask]     # blue
+        pca_curb_mask = pca_high_variation_mask(main_road, radius=0.3, z_variance_thresh=0.0001)
+        rough_points = main_road[pca_curb_mask]      # yellow
+        main_road = main_road[~pca_curb_mask]     # blue
     else:
         main_road = np.array([]).reshape(0, 3)
         rough_points = np.array([]).reshape(0, 3)
 
     # Median y of road
-    road_center_y = np.median(main_road[:, 1])
-    left_rough  = rough_points[rough_points[:, 1] < road_center_y]
+    road_center_y = np.median(main_road[:, 1]) if len(main_road) > 0 else 0
+    left_rough = rough_points[rough_points[:, 1] < road_center_y]
     right_rough = rough_points[rough_points[:, 1] > road_center_y]
 
-    MIN_CANDIDATES = 300  # adjustable based on density
+    MIN_CANDIDATES = 300
 
     if len(left_rough) > MIN_CANDIDATES:
         left_curb_y = np.percentile(left_rough[:, 1], 95)
     else:
-        print("sfdsfsdfsd")
-        left_curb_y = -np.inf  # keep all points on the left
+        left_curb_y = -np.inf
 
-    if len(right_rough)>MIN_CANDIDATES:
+    if len(right_rough) > MIN_CANDIDATES:
         right_curb_y = np.percentile(right_rough[:, 1], 5)
     else:
-        right_curb_y=np.inf
+        right_curb_y = np.inf
     
-    
-    #main_road=main_road[(main_road[:, 1] > left_curb_y) ]                                   #works really well!
-    main_road=main_road[(main_road[:, 1] > left_curb_y) & (main_road[:, 1] < right_curb_y)]  #works pretty well!!!
-    
+    main_road = main_road[(main_road[:, 1] > left_curb_y) & (main_road[:, 1] < right_curb_y)]
     
     # Detect obstacles
-    obstacle_points = detect_obstacles(np.asarray(pcd.points), main_road, 
+    obstacles = detect_obstacles(np.asarray(pcd.points), main_road, 
                                height_threshold=0.4, min_cluster_size=3)
     
-    # Cluster them
-    obstacle_clusters = filter_clusters_by_size(obstacle_points, eps=0.8, min_samples=10, min_cluster_size=20)
-
-    # Classify each cluster
-    classified = []
-    for cluster in obstacle_clusters:
-        label = pointnet_predict(cluster, pointnet_model, device)
-        classified.append((label, cluster))
-
-
-
+    # Cluster obstacles into individual objects
+    obstacle_clusters = cluster_obstacles(obstacles, eps=1.2, min_samples=8)
+    
     # Visualization
     proj = parse_calib(calib_path)
     img = cv2.imread(str(img_path))
@@ -407,56 +489,88 @@ def process_frame_improved(bin_path, args):
             if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
                 cv2.circle(img, (u, v), 2, (255, 100, 0), -1)  # Blue-ish
     
-    # # Project and draw obstacles (red)
-    # if len(obstacles) > 0:
-    #     obs_uv = project(obstacles, proj)
-    #     for u, v in obs_uv:
-    #         if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-    #             cv2.circle(img, (u, v), 3, (0, 0, 255), -1)  # Red
-    colors_map = {
-    'class_0': (0, 0, 255),       # Red
-    'class_1': (255, 0, 0),       # Blue
-    'class_2': (0, 255, 255),     # Yellow
-    'unknown': (128, 128, 128)    # Gray
-}
-
-    for label, cluster in classified:
-        color = colors_map.get(label, (0, 255, 0))  # default green
-        uv = project(cluster, proj)
-        for u, v in uv:
+    # Draw obstacle clusters with bounding boxes and distance-based colors
+    for i, cluster in enumerate(obstacle_clusters):
+        if len(cluster) == 0:
+            continue
+            
+        # Calculate distance from vehicle (assuming vehicle is at origin)
+        cluster_center = np.mean(cluster, axis=0)
+        distance = np.sqrt(cluster_center[0]**2 + cluster_center[1]**2)
+        
+        # Get color based on distance
+        color = get_distance_color(distance)
+        
+        # Draw individual obstacle points
+        obs_uv = project(cluster, proj)
+        for u, v in obs_uv:
             if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-                cv2.circle(img, (u, v), 3, color, -1)
+                cv2.circle(img, (u, v), 2, color, -1)
+        
+        # Draw 3D bounding box
+        draw_3d_bounding_box(img, cluster, proj, color, thickness=2)
+        
+        # Draw distance text
+        center_2d_points = project_all_points(cluster_center.reshape(1, -1), proj, img.shape)
+        if len(center_2d_points) > 0:
+            center_2d = center_2d_points[0]
+            draw_distance_text(img, center_2d, distance, color)
 
-    # draw curbs
+    # Draw curbs
     left_uv = project(left_rough, proj)
     right_uv = project(right_rough, proj)
 
-    # #rough_uv = project(left_rough, proj)
-    # for u, v in left_uv:
-    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-    #         cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
-    # #rough_uvr = project(right_rough, proj)
-    # for u, v in right_uv:
-    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-    #         cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # green
-   
+    for u, v in left_uv:
+        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+            cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
+    
+    for u, v in right_uv:
+        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+            cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
 
-    #print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
+    # Add legend
+    draw_legend(img)
+
+    print(f"Processed {frame}: {len(main_road)} road points, {len(obstacle_clusters)} obstacle clusters")
     cv2.imshow('Improved Road Detection', img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    
-    #get cuurrent directory
-    script_dir= Path(__file__).parent
-    #create output directory if not exists
-    output_dir = script_dir / "B1B2"
+    # Save image
+    script_dir = Path(__file__).parent
+    output_dir = script_dir / "B1B2clean"
     output_dir.mkdir(exist_ok=True)
-    #save image
-    output_img_path = output_dir / f"{frame}_B1B2.png"
+    output_img_path = output_dir / f"{frame}_B1B2_enhanced.png"
     cv2.imwrite(str(output_img_path), img)
-    print(f"saved at {output_img_path}")
+    print(f"Saved at {output_img_path}")
     
-    return main_road
+    return main_road, obstacle_clusters
+
+def draw_legend(img):
+    '''Draw distance color legend on the image'''
+    legend_y = 30
+    legend_x = img.shape[1] - 200
+    
+    distances = [5, 10, 15, 20, 30, 40]
+    labels = ["<5m", "5-10m", "10-15m", "15-20m", "20-30m", ">30m"]
+    
+    # Draw legend background
+    cv2.rectangle(img, (legend_x - 10, 10), (img.shape[1] - 10, legend_y + len(distances) * 25), 
+                  (0, 0, 0), -1)
+    cv2.rectangle(img, (legend_x - 10, 10), (img.shape[1] - 10, legend_y + len(distances) * 25), 
+                  (255, 255, 255), 2)
+    
+    # Draw legend title
+    cv2.putText(img, "Distance Legend", (legend_x, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    for i, (dist, label) in enumerate(zip(distances, labels)):
+        color = get_distance_color(dist)
+        y_pos = legend_y + 20 + i * 20
+        
+        # Draw color circle
+        cv2.circle(img, (legend_x, y_pos), 5, color, -1)
+        
+        # Draw label
+        cv2.putText(img, label, (legend_x + 15, y_pos + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
 # Helper functions (keep your existing ones)
 def load_bin(bin_path):
@@ -488,26 +602,6 @@ def project(pts, P):
     uv = np.zeros((len(pts), 2), dtype=int)
     uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
     return uv[valid]
-
-def pointnet_predict(cluster_points, model, device='cpu'):
-    import numpy as np
-    if len(cluster_points) == 0:
-        return 'unknown'
-
-    # Prepare input (normalize and sample)
-    N = 1024
-    idx = np.random.choice(len(cluster_points), N, replace=(len(cluster_points) < N))
-    pc = cluster_points[idx]
-    pc = pc - np.mean(pc, axis=0)
-    pc = pc / np.max(np.linalg.norm(pc, axis=1))
-    pc_tensor = torch.tensor(pc, dtype=torch.float32).unsqueeze(0).to(device)
-
-    # Predict
-    with torch.no_grad():
-        out = model(pc_tensor)
-        pred = out.max(1)[1].item()
-
-    return f"class_{pred}"  # You can map to human-readable if desired
 
 
 if __name__ == '__main__':
