@@ -13,3 +13,10 @@ Cooperative_Saliency-Based_Pothole_Detection_and_AR_Rendering_for_Increased_Situ
 /PART_B/alt_approach
 /PART_B/spatial_context_approach
 /PART_B/sidewalk
+/PART_B/B1B2
+/PART_B/sidewalk_removal
+/PART_B/sidewalkv3
+/pointnet_lib
+/PART_B/B1B2_improved
+/PART_B/enhanced_detection
+PART_B/__pycache__/classigy.cpython-311.pyc

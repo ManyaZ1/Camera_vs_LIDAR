@@ -257,25 +257,236 @@ def pca_high_variation_mask(points, radius=0.3, z_variance_thresh=0.002):
             high_variance_mask[i] = True
     return high_variance_mask
 
-def get_largest_cluster(points, eps=0.5, min_samples=10):
+# ---------------  parameters you can tune  --------------- #
+MIN_CLUSTER_SIZE   = 350            # as before
+CURB_BAND_WIDTH_Y  = 6.0            # max lateral distance from road centre [m]
+MAX_WALL_HEIGHT_Z  = 1.0            # clusters taller than this are treated as walls
+DBSCAN_EPS         = 0.8
+DBSCAN_MIN_SAMPLES = 10
+# --------------------------------------------------------- #
+
+def curb_side_clusters(side_points, centre_y):
+    """Return a list of clusters that are likely to be sidewalk curbs."""
+    if len(side_points) < DBSCAN_MIN_SAMPLES:
+        return []
+
+    labels = DBSCAN(eps=DBSCAN_EPS,
+                    min_samples=DBSCAN_MIN_SAMPLES).fit_predict(side_points[:, :2])
+
+    keep = []
+    for lbl in set(labels):
+        if lbl == -1:
+            continue                          # noise
+        mask = labels == lbl
+        if mask.sum() < MIN_CLUSTER_SIZE:
+            continue                          # too small
+        cluster = side_points[mask]
+
+        # 1) close enough to the road centre?
+        if np.abs(np.median(cluster[:, 1]) - centre_y) > CURB_BAND_WIDTH_Y:
+            continue
+
+        # 2) not a tall wall?
+        if cluster[:, 2].ptp() > MAX_WALL_HEIGHT_Z:   # ptp() = max - min
+            continue
+
+        keep.append(cluster)
+
+    return keep
+
+MIN_CANDIDATES = 350          # same as you already use
+CLUSTER_EPS    = 0.8
+MIN_SAMPLES    = 10  
+
+
+
+def biggest_cluster(points):
+    """Return the largest DBSCAN cluster that is big enough, else None."""
+    if len(points) < MIN_SAMPLES:
+        return None
+    labels = DBSCAN(eps=CLUSTER_EPS, min_samples=MIN_SAMPLES).fit_predict(points[:, :2])
+    best, best_len = None, 0
+    for lbl in set(labels):
+        if lbl == -1:
+            continue                      # noise
+        mask = labels == lbl
+        if mask.sum() >= MIN_CANDIDATES and mask.sum() > best_len:
+            best = points[mask]
+            best_len = mask.sum()
+    return best
+from sklearn.cluster import DBSCAN
+import numpy as np
+import cv2
+
+
+def curb_side_clusters(
+    side_points: np.ndarray,
+    centre_y: float,
+    *,
+    img=None,                 # supply both img & proj if you want on-image debug
+    proj=None,
+    cluster_color=(0, 255, 255),   # BGR  • left call → yellow, right call → green
+    eps: float = 0.8,
+    min_samples: int = 10,
+    min_cluster_size: int = 350,
+    band_width_y: float = 6.0,     # how far from road centre a curb may sit
+    max_wall_height_z: float | None = 2.0  # > None ⇒ skip the “tall wall” check
+) -> list[np.ndarray]:
+    """
+    Return **all** clusters that look like sidewalk curbs on ONE side of the road.
+
+    Parameters
+    ----------
+    side_points : (N,3) ndarray
+        Rough curb candidates on either the left or the right of the road.
+    centre_y : float
+        Median lateral position of the detected road surface.
+    img, proj : optional
+        If both are given, every accepted cluster is drawn on `img`
+        using `cluster_color` (helpful for debugging).
+    Other arguments
+        Tune only if needed – the defaults match the rest of your pipeline.
+
+    Returns
+    -------
+    clusters : list[np.ndarray]
+        Each entry is an (M,3) array with the XYZ points of one kept cluster.
+    """
+    # ––– early exit ––––––––––––––––––––––––––––––––––––––––––––––––––– #
+    if len(side_points) < min_samples:
+        return []
+
+    # ––– DBSCAN clustering in (x,y) –––––––––––––––––––––––––––––––––– #
+    labels = DBSCAN(eps=eps,
+                    min_samples=min_samples).fit_predict(side_points[:, :2])
+
+    kept: list[np.ndarray] = []
+
+    for lbl in set(labels):
+        if lbl == -1:                 # DBSCAN noise
+            continue
+
+        mask = labels == lbl
+        if mask.sum() < min_cluster_size:
+            continue                  # too small → ignore
+
+        cluster = side_points[mask]
+
+        # (1) it must sit not too far from the road centre laterally
+        if abs(np.median(cluster[:, 1]) - centre_y) > band_width_y:
+            continue
+
+        # (2) it must not be an *entire* tall wall (optional – set None to skip)
+        if max_wall_height_z is not None and \
+           np.ptp(cluster[:, 2]) > max_wall_height_z:   # np.ptp == max-min
+            continue
+
+        kept.append(cluster)
+
+        # ––– OPTIONAL drawing for visual debugging ––––––––––––––– #
+        if img is not None and proj is not None:
+            uv = project(cluster, proj)                 # your existing helper
+            for u, v in uv:
+                if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+                    cv2.circle(img, (u, v), 2, cluster_color, -1)
+        # ––– ----------------------------------------------------- #
+
+    return kept
+
+def curb_side_clusters_old(
+    side_points: np.ndarray,
+    centre_y: float,
+    *,
+    img=None,
+    proj=None,
+    cluster_color=(0, 255, 255),       # default = yellow (BGR)
+    eps: float = 0.8,
+    min_samples: int = 10,
+    min_cluster_size: int = 350,
+    band_width_y: float = 6.0,
+    max_wall_height_z: float = 1.0,
+):
+    """
+    Identify all sidewalk-curb-like clusters on ONE side of the road.
+
+    Parameters
+    ----------
+    side_points : (N,3) ndarray
+        Rough curb candidates on either the left or the right of the road centre.
+    centre_y : float
+        Median lateral position of the main road; used to reject far-away walls.
+    img, proj : optional
+        If both are supplied, each accepted cluster is drawn on `img`
+        with `cluster_color` using 2-D projection matrix `proj`.
+    cluster_color : tuple(int,int,int)
+        BGR colour used when drawing clusters.
+    eps, min_samples : DBSCAN parameters
+    min_cluster_size : int
+        Smallest cluster that is still considered a curb.
+    band_width_y : float
+        Max. lateral distance (|y_cluster − centre_y|) for a cluster to be counted.
+    max_wall_height_z : float
+        Clusters with vertical extent greater than this are treated as walls.
+
+    Returns
+    -------
+    clusters : list[np.ndarray]
+        Every element is an (M,3) array representing one accepted curb cluster.
+    """
+    if len(side_points) < min_samples:
+        return []
+
+    labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(side_points[:, :2])
+
+    kept_clusters = []
+    for lbl in set(labels):
+        if lbl == -1:                       # DBSCAN noise
+            continue
+        mask = labels == lbl
+        if mask.sum() < min_cluster_size:   # too small → ignore
+            continue
+
+        cluster = side_points[mask]
+
+        # (1) close enough laterally to the road centre?
+        if abs(np.median(cluster[:, 1]) - centre_y) > band_width_y:
+            continue
+
+        # (2) not just a tall wall?
+        if np.ptp(cluster[:, 2]) > max_wall_height_z:   # ptp = max - min
+            continue
+
+        kept_clusters.append(cluster)
+
+        # ---------- optional visual debugging ----------
+        if img is not None and proj is not None:
+            uv = project(cluster, proj)                # your existing helper
+            for u, v in uv:
+                if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+                    cv2.circle(img, (u, v), 2, cluster_color, -1)
+        # -----------------------------------------------
+
+    return kept_clusters
+from sklearn.cluster import DBSCAN
+
+def closest_cluster(points, center_y, eps=0.5, min_samples=10):
     if len(points) == 0:
         return np.empty((0, 3))
-
-    labels = DBSCAN(eps=eps, min_samples=min_samples).fit(points).labels_
-
-    # -1 means noise
-    valid_mask = labels != -1
-    labels = labels[valid_mask]
-    points = points[valid_mask]
-
-    if len(labels) == 0:
-        return np.empty((0, 3))
-
-    # Get label with most points
-    biggest_label = np.bincount(labels).argmax()
-    return points[labels == biggest_label]
-
-
+    
+    labels = DBSCAN(eps=eps, min_samples=min_samples).fit(points[:, :2]).labels_
+    best_cluster = None
+    best_dist = float('inf')
+    
+    for lbl in set(labels):
+        if lbl == -1:
+            continue
+        cluster = points[labels == lbl]
+        dist = abs(np.median(cluster[:, 1]) - center_y)
+        if dist < best_dist:
+            best_dist = dist
+            best_cluster = cluster
+    
+    return best_cluster if best_cluster is not None else np.empty((0, 3))
 
 def process_frame_improved(bin_path, args):
     frame = bin_path.stem
@@ -310,47 +521,17 @@ def process_frame_improved(bin_path, args):
         all_ground_indices.extend(indices)
     
     candidate_points = np.asarray(pcd.points)[all_ground_indices]
-
-
-    #curb_mask = detect_curb_by_height_discontinuity(candidate_points)
-    #road_candidates = candidate_points[~curb_mask]
-
-    # curb_mask = find_curb_by_normals(candidate_points)
-    # road_candidates = candidate_points[~curb_mask]  # Keep only non-curb-like
-    #curb_points = candidate_points[curb_mask]
     
     # Adaptive height filtering
     road_candidates = adaptive_height_filtering(candidate_points, grid_size=0.8)
     
-    #PCA before road cluster version (finds walls outside the road mask)
-    '''# rough_mask = pca_high_variation_mask(road_candidates, radius=0.5, z_variance_thresh=0.0001)
-    # rough_points = road_candidates[rough_mask]        # ✅ SAME input
-    # road_candidates = road_candidates[~rough_mask]'''
-  
-    # Road continuity filtering (not needed)
-    #road_points = road_continuity_filter(road_candidates, search_radius=1.5, min_neighbors=8)
-
     road_points=road_candidates
 
     # Cluster road segments
     road_clusters = cluster_road_segments(road_points, eps=1.5, min_samples=15)
     
     # Select the largest cluster as the main road
-    '''if road_clusters:
-        main_road = max(road_clusters, key=len)
-        # Apply tighter lateral crop to main road
-        main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
-    else:
-        main_road = np.array([]).reshape(0, 3)
     
-    #ineffective curb mask not used
-    #curb_mask = find_curb_by_normals(main_road)
-    #main_road = main_road[~curb_mask]  # Keep only non-curb-like
-
-    # Final sidewalk/curb cleanup on confirmed main road
-    pca_curb_mask = pca_high_variation_mask(main_road, radius=0.3, z_variance_thresh=0.0001) #radius=.5
-    main_road_clean = main_road[~pca_curb_mask]
-    rough_points    = main_road[pca_curb_mask]'''
     if road_clusters:
         main_road = max(road_clusters, key=len)
         main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
@@ -361,49 +542,34 @@ def process_frame_improved(bin_path, args):
     else:
         main_road = np.array([]).reshape(0, 3)
         rough_points = np.array([]).reshape(0, 3)
-    # #attempt 2 reclustering
-    # new_clusters = cluster_road_segments(main_road, eps=1.0, min_samples=10)
+    proj = parse_calib(calib_path)
+    img = cv2.imread(str(img_path))
 
-    # if new_clusters:
-    #     main_road = max(new_clusters, key=len)
-    # else:
-    #     print("[WARN] No valid road segment after curb removal")
-    #     main_road = np.empty((0, 3))
-
-    # attempt 1 left and right 
-    # Median y of road
+    # -------------  left / right rough split  ------------- #
     road_center_y = np.median(main_road[:, 1])
-    left_rough  = rough_points[rough_points[:, 1] < road_center_y]
-    right_rough = rough_points[rough_points[:, 1] > road_center_y]
-    #print(len(right_rough))
-    #left_clusters = count_clusters(right_rough, eps=1, min_samples=10)
-    #print(f"[INFO] Left rough clusters found: {left_clusters}")
-    ##left_curb_cluster  = get_largest_cluster(left_rough,  eps=1.0, min_samples=10)
-    #right_curb_cluster = get_largest_cluster(right_rough, eps=1.0, min_samples=10)
-    #left_curb_cluster=left_rough
-    #right_curb_cluster=right_rough
-    MIN_CANDIDATES = 300  # adjustable based on density
 
-    if len(left_rough) > MIN_CANDIDATES:
-        left_curb_y = np.percentile(left_rough[:, 1], 95)
+    left_rough   = rough_points[ rough_points[:, 1] < road_center_y ]
+    right_rough  = rough_points[ rough_points[:, 1] > road_center_y ]
+
+    left_cluster  = closest_cluster(left_rough,  road_center_y)
+    right_cluster = closest_cluster(right_rough, road_center_y)
+
+    if len(left_cluster) > MIN_CANDIDATES:
+        left_curb_y = np.percentile(left_cluster[:, 1], 95)
     else:
-        print("sfdsfsdfsd")
-        left_curb_y = -np.inf  # keep all points on the left
-    #left_curb_y  = np.percentile(left_rough[:, 1], 95) if len(left_rough) > 0 else -np.inf
-    if len(right_rough)>MIN_CANDIDATES:
-        right_curb_y = np.percentile(right_rough[:, 1], 5)
+        left_curb_y = -np.inf
+
+    if len(right_cluster) > MIN_CANDIDATES:
+        right_curb_y = np.percentile(right_cluster[:, 1], 5)
     else:
-        right_curb_y=np.inf
-    # Mask away points beyond sidewalk start
-    #main_road = main_road[(main_road[:, 1] < left_curb_y) & (main_road[:, 1] < right_curb_y)]
-    #sidewalk= main_road[(main_road[:, 1] < left_curb_y) & (main_road[:, 1] < right_curb_y)]
-    
-    #main_road=main_road[(main_road[:, 1] > left_curb_y) ]                                   #works really well!
-    main_road=main_road[(main_road[:, 1] > left_curb_y) & (main_road[:, 1] < right_curb_y)]  #works pretty well!!!
-    
-    # someties two clusters more than min candidates cuts wrong stuff
-    #main_road=main_road[ (main_road[:, 1] < right_curb_y)]
-    # Detect obstacles
+        right_curb_y = np.inf
+
+    main_road = main_road[(main_road[:, 1] > left_curb_y) & (main_road[:, 1] < right_curb_y)]
+
+
+
+
+
     obstacles = detect_obstacles(np.asarray(pcd.points), main_road, 
                                height_threshold=0.4, min_cluster_size=3)
     
@@ -425,19 +591,6 @@ def process_frame_improved(bin_path, args):
             if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
                 cv2.circle(img, (u, v), 3, (0, 0, 255), -1)  # Red
 
-    # d
-    # raw curbs
-    left_uv = project(left_rough, proj)
-    right_uv = project(right_rough, proj)
-
-    #rough_uv = project(left_rough, proj)
-    for u, v in left_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
-    #rough_uvr = project(right_rough, proj)
-    for u, v in right_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # green
    
 
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
@@ -451,8 +604,8 @@ def process_frame_improved(bin_path, args):
     output_dir = script_dir / "sidewalk_removal"
     output_dir.mkdir(exist_ok=True)
     #save image
-    output_img_path = output_dir / f"{frame}_sidewalk_removed.png"
-    cv2.imwrite(str(output_img_path), img)
+    output_img_path = output_dir / f"{frame}_road_detection.png"
+    #cv2.imwrite(str(output_img_path), img)
     print(f"saved at {output_img_path}")
     
     return main_road, obstacles

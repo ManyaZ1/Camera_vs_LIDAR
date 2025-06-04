@@ -310,14 +310,6 @@ def process_frame_improved(bin_path, args):
         all_ground_indices.extend(indices)
     
     candidate_points = np.asarray(pcd.points)[all_ground_indices]
-
-
-    #curb_mask = detect_curb_by_height_discontinuity(candidate_points)
-    #road_candidates = candidate_points[~curb_mask]
-
-    # curb_mask = find_curb_by_normals(candidate_points)
-    # road_candidates = candidate_points[~curb_mask]  # Keep only non-curb-like
-    #curb_points = candidate_points[curb_mask]
     
     # Adaptive height filtering
     road_candidates = adaptive_height_filtering(candidate_points, grid_size=0.8)
@@ -336,21 +328,7 @@ def process_frame_improved(bin_path, args):
     road_clusters = cluster_road_segments(road_points, eps=1.5, min_samples=15)
     
     # Select the largest cluster as the main road
-    '''if road_clusters:
-        main_road = max(road_clusters, key=len)
-        # Apply tighter lateral crop to main road
-        main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
-    else:
-        main_road = np.array([]).reshape(0, 3)
-    
-    #ineffective curb mask not used
-    #curb_mask = find_curb_by_normals(main_road)
-    #main_road = main_road[~curb_mask]  # Keep only non-curb-like
 
-    # Final sidewalk/curb cleanup on confirmed main road
-    pca_curb_mask = pca_high_variation_mask(main_road, radius=0.3, z_variance_thresh=0.0001) #radius=.5
-    main_road_clean = main_road[~pca_curb_mask]
-    rough_points    = main_road[pca_curb_mask]'''
     if road_clusters:
         main_road = max(road_clusters, key=len)
         main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
@@ -361,27 +339,12 @@ def process_frame_improved(bin_path, args):
     else:
         main_road = np.array([]).reshape(0, 3)
         rough_points = np.array([]).reshape(0, 3)
-    # #attempt 2 reclustering
-    # new_clusters = cluster_road_segments(main_road, eps=1.0, min_samples=10)
 
-    # if new_clusters:
-    #     main_road = max(new_clusters, key=len)
-    # else:
-    #     print("[WARN] No valid road segment after curb removal")
-    #     main_road = np.empty((0, 3))
-
-    # attempt 1 left and right 
     # Median y of road
     road_center_y = np.median(main_road[:, 1])
     left_rough  = rough_points[rough_points[:, 1] < road_center_y]
     right_rough = rough_points[rough_points[:, 1] > road_center_y]
-    #print(len(right_rough))
-    #left_clusters = count_clusters(right_rough, eps=1, min_samples=10)
-    #print(f"[INFO] Left rough clusters found: {left_clusters}")
-    ##left_curb_cluster  = get_largest_cluster(left_rough,  eps=1.0, min_samples=10)
-    #right_curb_cluster = get_largest_cluster(right_rough, eps=1.0, min_samples=10)
-    #left_curb_cluster=left_rough
-    #right_curb_cluster=right_rough
+
     MIN_CANDIDATES = 300  # adjustable based on density
 
     if len(left_rough) > MIN_CANDIDATES:
@@ -389,20 +352,17 @@ def process_frame_improved(bin_path, args):
     else:
         print("sfdsfsdfsd")
         left_curb_y = -np.inf  # keep all points on the left
-    #left_curb_y  = np.percentile(left_rough[:, 1], 95) if len(left_rough) > 0 else -np.inf
+
     if len(right_rough)>MIN_CANDIDATES:
         right_curb_y = np.percentile(right_rough[:, 1], 5)
     else:
         right_curb_y=np.inf
-    # Mask away points beyond sidewalk start
-    #main_road = main_road[(main_road[:, 1] < left_curb_y) & (main_road[:, 1] < right_curb_y)]
-    #sidewalk= main_road[(main_road[:, 1] < left_curb_y) & (main_road[:, 1] < right_curb_y)]
+    
     
     #main_road=main_road[(main_road[:, 1] > left_curb_y) ]                                   #works really well!
     main_road=main_road[(main_road[:, 1] > left_curb_y) & (main_road[:, 1] < right_curb_y)]  #works pretty well!!!
     
-    # someties two clusters more than min candidates cuts wrong stuff
-    #main_road=main_road[ (main_road[:, 1] < right_curb_y)]
+    
     # Detect obstacles
     obstacles = detect_obstacles(np.asarray(pcd.points), main_road, 
                                height_threshold=0.4, min_cluster_size=3)
@@ -425,8 +385,7 @@ def process_frame_improved(bin_path, args):
             if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
                 cv2.circle(img, (u, v), 3, (0, 0, 255), -1)  # Red
 
-    # d
-    # raw curbs
+    # draw curbs
     left_uv = project(left_rough, proj)
     right_uv = project(right_rough, proj)
 
@@ -441,17 +400,17 @@ def process_frame_improved(bin_path, args):
    
 
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
-    cv2.imshow('Improved Road Detection', img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    #save to directory alt_approach
+    #cv2.imshow('Improved Road Detection', img)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
+    
     #get cuurrent directory
     script_dir= Path(__file__).parent
     #create output directory if not exists
-    output_dir = script_dir / "sidewalk_removal"
+    output_dir = script_dir / "B1B2"
     output_dir.mkdir(exist_ok=True)
     #save image
-    output_img_path = output_dir / f"{frame}_sidewalk_removed.png"
+    output_img_path = output_dir / f"{frame}_B1B2.png"
     cv2.imwrite(str(output_img_path), img)
     print(f"saved at {output_img_path}")
     

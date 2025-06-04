@@ -7,6 +7,21 @@ from pathlib import Path
 import argparse
 from sklearn.decomposition import PCA
 from scipy.spatial import cKDTree
+import sys
+from pathlib import Path
+
+# Append absolute path to pointnet_lib (relative to this file)
+pointnet_path = Path(__file__).parent / "pointnet_lib"
+sys.path.append(str(pointnet_path))
+
+from pointnet.model import PointNetCls
+import torch
+
+# Load model once
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+pointnet_model = PointNetCls(k=40).to(device)
+pointnet_model.load_state_dict(torch.load('pointnet_lib/cls/pointnet_model.pth', map_location=device))
+pointnet_model.eval()
 
 LOCAL_HEIGHT_TRESHOLD = 0.1 # adaptive_height_filtering
 HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
@@ -310,14 +325,6 @@ def process_frame_improved(bin_path, args):
         all_ground_indices.extend(indices)
     
     candidate_points = np.asarray(pcd.points)[all_ground_indices]
-
-
-    #curb_mask = detect_curb_by_height_discontinuity(candidate_points)
-    #road_candidates = candidate_points[~curb_mask]
-
-    # curb_mask = find_curb_by_normals(candidate_points)
-    # road_candidates = candidate_points[~curb_mask]  # Keep only non-curb-like
-    #curb_points = candidate_points[curb_mask]
     
     # Adaptive height filtering
     road_candidates = adaptive_height_filtering(candidate_points, grid_size=0.8)
@@ -336,21 +343,7 @@ def process_frame_improved(bin_path, args):
     road_clusters = cluster_road_segments(road_points, eps=1.5, min_samples=15)
     
     # Select the largest cluster as the main road
-    '''if road_clusters:
-        main_road = max(road_clusters, key=len)
-        # Apply tighter lateral crop to main road
-        main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
-    else:
-        main_road = np.array([]).reshape(0, 3)
-    
-    #ineffective curb mask not used
-    #curb_mask = find_curb_by_normals(main_road)
-    #main_road = main_road[~curb_mask]  # Keep only non-curb-like
 
-    # Final sidewalk/curb cleanup on confirmed main road
-    pca_curb_mask = pca_high_variation_mask(main_road, radius=0.3, z_variance_thresh=0.0001) #radius=.5
-    main_road_clean = main_road[~pca_curb_mask]
-    rough_points    = main_road[pca_curb_mask]'''
     if road_clusters:
         main_road = max(road_clusters, key=len)
         main_road = main_road[np.abs(main_road[:, 1]) < 5.0]
@@ -361,27 +354,12 @@ def process_frame_improved(bin_path, args):
     else:
         main_road = np.array([]).reshape(0, 3)
         rough_points = np.array([]).reshape(0, 3)
-    # #attempt 2 reclustering
-    # new_clusters = cluster_road_segments(main_road, eps=1.0, min_samples=10)
 
-    # if new_clusters:
-    #     main_road = max(new_clusters, key=len)
-    # else:
-    #     print("[WARN] No valid road segment after curb removal")
-    #     main_road = np.empty((0, 3))
-
-    # attempt 1 left and right 
     # Median y of road
     road_center_y = np.median(main_road[:, 1])
     left_rough  = rough_points[rough_points[:, 1] < road_center_y]
     right_rough = rough_points[rough_points[:, 1] > road_center_y]
-    #print(len(right_rough))
-    #left_clusters = count_clusters(right_rough, eps=1, min_samples=10)
-    #print(f"[INFO] Left rough clusters found: {left_clusters}")
-    ##left_curb_cluster  = get_largest_cluster(left_rough,  eps=1.0, min_samples=10)
-    #right_curb_cluster = get_largest_cluster(right_rough, eps=1.0, min_samples=10)
-    #left_curb_cluster=left_rough
-    #right_curb_cluster=right_rough
+
     MIN_CANDIDATES = 300  # adjustable based on density
 
     if len(left_rough) > MIN_CANDIDATES:
@@ -389,24 +367,32 @@ def process_frame_improved(bin_path, args):
     else:
         print("sfdsfsdfsd")
         left_curb_y = -np.inf  # keep all points on the left
-    #left_curb_y  = np.percentile(left_rough[:, 1], 95) if len(left_rough) > 0 else -np.inf
+
     if len(right_rough)>MIN_CANDIDATES:
         right_curb_y = np.percentile(right_rough[:, 1], 5)
     else:
         right_curb_y=np.inf
-    # Mask away points beyond sidewalk start
-    #main_road = main_road[(main_road[:, 1] < left_curb_y) & (main_road[:, 1] < right_curb_y)]
-    #sidewalk= main_road[(main_road[:, 1] < left_curb_y) & (main_road[:, 1] < right_curb_y)]
+    
     
     #main_road=main_road[(main_road[:, 1] > left_curb_y) ]                                   #works really well!
     main_road=main_road[(main_road[:, 1] > left_curb_y) & (main_road[:, 1] < right_curb_y)]  #works pretty well!!!
     
-    # someties two clusters more than min candidates cuts wrong stuff
-    #main_road=main_road[ (main_road[:, 1] < right_curb_y)]
+    
     # Detect obstacles
-    obstacles = detect_obstacles(np.asarray(pcd.points), main_road, 
+    obstacle_points = detect_obstacles(np.asarray(pcd.points), main_road, 
                                height_threshold=0.4, min_cluster_size=3)
     
+    # Cluster them
+    obstacle_clusters = filter_clusters_by_size(obstacle_points, eps=0.8, min_samples=10, min_cluster_size=20)
+
+    # Classify each cluster
+    classified = []
+    for cluster in obstacle_clusters:
+        label = pointnet_predict(cluster, pointnet_model, device)
+        classified.append((label, cluster))
+
+
+
     # Visualization
     proj = parse_calib(calib_path)
     img = cv2.imread(str(img_path))
@@ -418,44 +404,56 @@ def process_frame_improved(bin_path, args):
             if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
                 cv2.circle(img, (u, v), 2, (255, 100, 0), -1)  # Blue-ish
     
-    # Project and draw obstacles (red)
-    if len(obstacles) > 0:
-        obs_uv = project(obstacles, proj)
-        for u, v in obs_uv:
-            if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-                cv2.circle(img, (u, v), 3, (0, 0, 255), -1)  # Red
+    # # Project and draw obstacles (red)
+    # if len(obstacles) > 0:
+    #     obs_uv = project(obstacles, proj)
+    #     for u, v in obs_uv:
+    #         if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+    #             cv2.circle(img, (u, v), 3, (0, 0, 255), -1)  # Red
+    colors_map = {
+    'class_0': (0, 0, 255),       # Red
+    'class_1': (255, 0, 0),       # Blue
+    'class_2': (0, 255, 255),     # Yellow
+    'unknown': (128, 128, 128)    # Gray
+}
 
-    # d
-    # raw curbs
+    for label, cluster in classified:
+        color = colors_map.get(label, (0, 255, 0))  # default green
+        uv = project(cluster, proj)
+        for u, v in uv:
+            if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+                cv2.circle(img, (u, v), 3, color, -1)
+
+    # draw curbs
     left_uv = project(left_rough, proj)
     right_uv = project(right_rough, proj)
 
-    #rough_uv = project(left_rough, proj)
-    for u, v in left_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
-    #rough_uvr = project(right_rough, proj)
-    for u, v in right_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # green
+    # #rough_uv = project(left_rough, proj)
+    # for u, v in left_uv:
+    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+    #         cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
+    # #rough_uvr = project(right_rough, proj)
+    # for u, v in right_uv:
+    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+    #         cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # green
    
 
-    print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
+    #print(f"Processed {frame}: {len(main_road)} road points, {len(obstacles)} obstacle points")
     cv2.imshow('Improved Road Detection', img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-    #save to directory alt_approach
+    
     #get cuurrent directory
     script_dir= Path(__file__).parent
     #create output directory if not exists
-    output_dir = script_dir / "sidewalk_removal"
+    output_dir = script_dir / "B1B2"
     output_dir.mkdir(exist_ok=True)
     #save image
-    output_img_path = output_dir / f"{frame}_sidewalk_removed.png"
+    output_img_path = output_dir / f"{frame}_B1B2.png"
     cv2.imwrite(str(output_img_path), img)
     print(f"saved at {output_img_path}")
     
-    return main_road, obstacles
+    return main_road
 
 # Helper functions (keep your existing ones)
 def load_bin(bin_path):
@@ -487,6 +485,26 @@ def project(pts, P):
     uv = np.zeros((len(pts), 2), dtype=int)
     uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
     return uv[valid]
+
+def pointnet_predict(cluster_points, model, device='cpu'):
+    import numpy as np
+    if len(cluster_points) == 0:
+        return 'unknown'
+
+    # Prepare input (normalize and sample)
+    N = 1024
+    idx = np.random.choice(len(cluster_points), N, replace=(len(cluster_points) < N))
+    pc = cluster_points[idx]
+    pc = pc - np.mean(pc, axis=0)
+    pc = pc / np.max(np.linalg.norm(pc, axis=1))
+    pc_tensor = torch.tensor(pc, dtype=torch.float32).unsqueeze(0).to(device)
+
+    # Predict
+    with torch.no_grad():
+        out = model(pc_tensor)
+        pred = out.max(1)[1].item()
+
+    return f"class_{pred}"  # You can map to human-readable if desired
 
 
 if __name__ == '__main__':
