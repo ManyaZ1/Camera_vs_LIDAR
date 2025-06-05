@@ -4,6 +4,9 @@
   
 - **Python** (version 3.12.9): https://www.python.org/downloads/  
 - **Git Bash** (optional): For cloning the repository easily.
+```pip install opencv-python==4.5.5.64
+    pip install numpy==1.26.4
+```
 
 ## Current Progress
 

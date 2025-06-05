@@ -28,9 +28,9 @@ import open3d as o3d
 def get_args() -> argparse.Namespace:
     p = argparse.ArgumentParser("Road extraction with YOLO, RANSAC, GrabCut")
     p.add_argument("--index", default="all", help="KITTI frame id (or 'all')")
-    p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
-    p.add_argument("--left_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
-    p.add_argument("--right_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_right/training/image_3")
+    p.add_argument("--calib_dir", default="C:/Users/Mania/Documents/KITTI/data_road/training/calib")
+    p.add_argument("--left_dir",  default="C:/Users/Mania/Documents/KITTI/data_road/training/image_2")
+    p.add_argument("--right_dir", default="C:/Users/Mania/Documents/KITTI/data_road_right/training/image_3")
     p.add_argument("--yolo_cfg", default="yolov3.cfg")
     p.add_argument("--yolo_weights", default="yolov3.weights")
     p.add_argument("--yolo_names", default="coco.names")

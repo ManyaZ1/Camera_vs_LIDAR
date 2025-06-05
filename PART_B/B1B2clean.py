@@ -333,6 +333,7 @@ def count_clusters(points, eps=0.8, min_samples=8):
     num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     return num_clusters
 
+# NORMALS - PCA - SIDEWALK REMOVAL
 def compute_normals(points, radius=0.3):
     pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
     pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30))
@@ -344,8 +345,8 @@ def find_curb_by_normals(points, verticality_thresh=0.1):
     verticality = np.abs(normals[:, 2])
     curb_mask = verticality < verticality_thresh
     return curb_mask
-
-def detect_curb_by_height_discontinuity(points, radius=0.25, z_jump_thresh=0.12):
+#UNUSED
+def detect_curb_by_height_discontinuity(points, radius=0.25, z_jump_thresh=0.12): 
     """
     Returns a boolean mask of points that are near vertical discontinuities in z.
     """
@@ -397,6 +398,60 @@ def get_largest_cluster(points, eps=0.5, min_samples=10):
     # Get label with most points
     biggest_label = np.bincount(labels).argmax()
     return points[labels == biggest_label]
+
+# —————————————————————————————————————— B3 —————————————————————————————————————— #  
+
+def direction_arrow(img, calib_path, length=6.0, color=(255, 255, 255)):
+    """
+    Σχεδιάζει ένα βέλος στην εικόνα που δείχνει την κατεύθυνση του αυτοκινήτου (προς τα εμπρός).
+    Parameters:
+    - img: η RGB εικόνα
+    - calib_path: path προς το .txt αρχείο calibration (π.χ. um_000055.txt)
+    - length: μήκος του διανύσματος σε μέτρα
+    - color: χρώμα του βέλους (BGR)
+    """
+    # Parse calibration
+    data = {}
+    with open(calib_path) as f:
+        for line in f:
+            if ':' in line:
+                k, v = line.strip().split(':', 1)
+                data[k] = np.fromstring(v, sep=' ')
+
+    # Reconstruct transformation matrix
+    Tr = np.eye(4)
+    Tr[:3, :4] = data['Tr_velo_to_cam'].reshape(3, 4)
+    P2 = data['P2'].reshape(3, 4)
+    R0 = data['R0_rect'].reshape(3, 3)
+
+    proj = np.eye(4)
+    proj[:3, :4] = P2
+    proj = proj @ np.block([[R0, np.zeros((3, 1))], [0, 0, 0, 1]]) @ Tr
+
+    # Direction in LiDAR space (Z_cam forward)
+    R = Tr[:3, :3]
+    camera_forward = np.array([0, 0, 1])
+    lidar_forward = R.T @ camera_forward 
+    lidar_forward = lidar_forward / np.linalg.norm(lidar_forward)
+    print(f'lidar_forward={lidar_forward}')
+    
+    start = lidar_forward * 0.1  # 10cm μπροστά στην ίδια κατεύθυνση
+    end = start + lidar_forward * length
+    pts3d = np.vstack([start, end])
+    
+    from_point = project_all_points(pts3d[:1], proj, img.shape)
+    to_point   = project_all_points(pts3d[1:], proj, img.shape)
+    print(from_point,'and',to_point )
+    print("projected start Z:", (proj @ np.array([0, 0, 0, 1]))[2])
+    if len(from_point) == 1 and len(to_point) == 1:
+        pt1 = tuple(from_point[0])
+        pt2 = tuple(to_point[0])
+        cv2.arrowedLine(img, pt1, pt2, color, thickness=3, tipLength=0.3)
+
+
+##################################################################################################
+# —————————————————————————————————————— complete process —————————————————————————————————————— #  
+##################################################################################################
 
 def process_frame_improved(bin_path, args):
     frame = bin_path.stem
@@ -532,6 +587,7 @@ def process_frame_improved(bin_path, args):
     draw_legend(img)
 
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacle_clusters)} obstacle clusters")
+    direction_arrow(img, calib_path, length=6.0, color=(255, 255, 255))
     cv2.imshow('Improved Road Detection', img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
@@ -540,7 +596,7 @@ def process_frame_improved(bin_path, args):
     output_dir = script_dir / "B1B2clean"
     output_dir.mkdir(exist_ok=True)
     output_img_path = output_dir / f"{frame}_B1B2_enhanced.png"
-    cv2.imwrite(str(output_img_path), img)
+    #cv2.imwrite(str(output_img_path), img)
     print(f"Saved at {output_img_path}")
     
     return main_road, obstacle_clusters
