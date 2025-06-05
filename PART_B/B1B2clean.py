@@ -757,7 +757,8 @@ def process_frame_improved(bin_path, args):
         rough_points = np.array([]).reshape(0, 3)
 
     # Median y of road
-    road_center_y = np.median(main_road[:, 1]) if len(main_road) > 0 else 0
+    #road_center_y = np.median(main_road[:, 1]) if len(main_road) > 0 else 0
+    road_center_y = 0.0
     left_rough = rough_points[rough_points[:, 1] < road_center_y]
     right_rough = rough_points[rough_points[:, 1] > road_center_y]
 
@@ -842,16 +843,16 @@ def process_frame_improved(bin_path, args):
     pt1, pt2,dist = direction_arrow_road_surface(img, calib_path) #best
     #print(pt1,pt2)
 
-    # cv2.imshow('Improved Road Detection', img)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    cv2.imshow('Improved Road Detection', img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     # Save image
     script_dir = Path(__file__).parent
     output_dir = script_dir / "B1B2B3"
     output_dir.mkdir(exist_ok=True)
     output_img_path = output_dir / f"{frame}_d_{dist}.png"
-    cv2.imwrite(str(output_img_path), img)
+    #cv2.imwrite(str(output_img_path), img)
     print(f"Saved at {output_img_path}")
     
     return main_road, obstacle_clusters
