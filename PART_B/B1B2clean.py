@@ -67,23 +67,51 @@ def project_all_points(pts, P, img_shape):
     if len(pts) == 0:
         return np.array([]).reshape(0, 2)
     
+    # Convert to homogeneous coordinates
     h = np.hstack([pts, np.ones((len(pts), 1))])
+    
+    # Project
     uvw = (P @ h.T).T
     z = uvw[:, 2]
-    valid = z > 0
     
-    uv = np.zeros((len(pts), 2), dtype=int)
-    if np.any(valid):
-        uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
-        
-        # Filter points within image bounds
-        img_valid = ((uv[:, 0] >= 0) & (uv[:, 0] < img_shape[1]) & 
-                    (uv[:, 1] >= 0) & (uv[:, 1] < img_shape[0]))
-        final_valid = valid & img_valid
-        
-        return uv[final_valid]
+    # Keep points in front of camera
+    valid = z > 0.1  # Small threshold to avoid division by very small numbers
     
-    return np.array([]).reshape(0, 2)
+    if not np.any(valid):
+        return np.array([]).reshape(0, 2)
+    
+    # Convert to image coordinates
+    uv = uvw[valid, :2] / z[valid, np.newaxis]
+    uv = uv.astype(int)
+    
+    # Filter points within image bounds
+    img_valid = ((uv[:, 0] >= 0) & (uv[:, 0] < img_shape[1]) & 
+                (uv[:, 1] >= 0) & (uv[:, 1] < img_shape[0]))
+    
+    return uv[img_valid]
+
+# def project_all_points(pts, P, img_shape):
+#     '''Project 3D points to image coordinates, return only valid points'''
+#     if len(pts) == 0:
+#         return np.array([]).reshape(0, 2)
+    
+#     h = np.hstack([pts, np.ones((len(pts), 1))])
+#     uvw = (P @ h.T).T
+#     z = uvw[:, 2]
+#     valid = z > 0
+    
+#     uv = np.zeros((len(pts), 2), dtype=int)
+#     if np.any(valid):
+#         uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
+        
+#         # Filter points within image bounds
+#         img_valid = ((uv[:, 0] >= 0) & (uv[:, 0] < img_shape[1]) & 
+#                     (uv[:, 1] >= 0) & (uv[:, 1] < img_shape[0]))
+#         final_valid = valid & img_valid
+        
+#         return uv[final_valid]
+    
+#     return np.array([]).reshape(0, 2)
 
 ####################################################################################################
 # —————————————————————————————————————— B1 road detetcion  —————————————————————————————————————— #  
@@ -175,7 +203,26 @@ def adaptive_height_filtering(points, grid_size=1.0, percentile=10):
     
     return points[filtered_indices]
 
+def cluster_road_segments(points, eps=1.0, min_samples=10):
+    '''Cluster road points into coherent segments'''
+    if len(points) < min_samples:
+        return [points]
+    
+    # Use DBSCAN clustering on 2D coordinates
+    clustering = DBSCAN(eps=eps, min_samples=min_samples)
+    labels = clustering.fit_predict(points[:, :2])
+    
+    # Group points by cluster
+    clusters = []
+    for label in set(labels):
+        if label != -1:  # Ignore noise points
+            cluster_points = points[labels == label]
+            if len(cluster_points) >= min_samples:
+                clusters.append(cluster_points)
+    
+    return clusters
 
+#unused
 def road_continuity_filter(points, search_radius=2.0, min_neighbors=5):
     '''Filter points based on road continuity
     Keep only the points that:
@@ -201,25 +248,6 @@ def road_continuity_filter(points, search_radius=2.0, min_neighbors=5):
                 valid_indices.append(i)
     
     return points[valid_indices]
-
-def cluster_road_segments(points, eps=1.0, min_samples=10):
-    '''Cluster road points into coherent segments'''
-    if len(points) < min_samples:
-        return [points]
-    
-    # Use DBSCAN clustering on 2D coordinates
-    clustering = DBSCAN(eps=eps, min_samples=min_samples)
-    labels = clustering.fit_predict(points[:, :2])
-    
-    # Group points by cluster
-    clusters = []
-    for label in set(labels):
-        if label != -1:  # Ignore noise points
-            cluster_points = points[labels == label]
-            if len(cluster_points) >= min_samples:
-                clusters.append(cluster_points)
-    
-    return clusters
 
 # —————————————————————————————————————— sidewalk —————————————————————————————————————— #
 
@@ -461,14 +489,9 @@ def draw_legend(img):
         cv2.putText(img, label, (legend_x + 15, y_pos + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
 # —————————————————————————————————————— B3 —————————————————————————————————————— #  
-def direction_arrow(img, calib_path, length=6.0, color = (0, 0, 255)):
+def direction_arrow_debug(img, calib_path, length=6.0, color=(0, 0, 255)):
     """
-    Σχεδιάζει ένα βέλος στην εικόνα που δείχνει την κατεύθυνση του αυτοκινήτου (προς τα εμπρός).
-    Parameters:
-    - img: η RGB εικόνα
-    - calib_path: path προς το .txt αρχείο calibration (π.χ. um_000055.txt)
-    - length: μήκος του διανύσματος σε μέτρα
-    - color: χρώμα του βέλους (BGR)
+    Draws an arrow with extensive debugging to understand projection issues.
     """
     # Parse calibration
     data = {}
@@ -487,65 +510,194 @@ def direction_arrow(img, calib_path, length=6.0, color = (0, 0, 255)):
 
     P2 = data['P2'].reshape(3, 4)
 
-    # Final projection matrix: P = P2 · R0 · Tr
-    proj = P2 @ R0 @ Tr  # shape (3x4)
+    # Final projection matrix
+    proj = P2 @ R0 @ Tr
 
-    # Vehicle forward direction
-    R = Tr[:3, :3]
-    camera_forward = np.array([0, 0, 1])
-    lidar_forward = R.T @ camera_forward
-    lidar_forward = lidar_forward / np.linalg.norm(lidar_forward)
+    print("Projection matrix shape:", proj.shape)
+    print("Image shape:", img.shape)
 
-    # Small offset in that direction
-    start = lidar_forward * 1.
-    end = start + lidar_forward * length
-    pts3d = np.vstack([start, end])
-    #print(start,'s',end)
-    from_point = project_all_points(pts3d[:1], proj, img.shape)
-    to_point   = project_all_points(pts3d[1:], proj, img.shape)
-    print(" from_point ",from_point," to_point ",to_point)
-    if len(from_point) == 1 and len(to_point) == 1:
-        pt1 = tuple(from_point[0])
-        pt2 = tuple(to_point[0])
-        cv2.arrowedLine(img, pt1, pt2, color, thickness=3, tipLength=0.3)
-    pt1 = from_point
-    pt2 = to_point
-    return pt1[0], pt2[0]
-def draw_calibration_arrow(img, calib_path, length=6.0, color=(0, 0, 255)):
-    # Calibration matrices
+    # Try multiple starting positions
+    test_positions = [
+        ([0.0, 0.0, -1.5], "origin"),
+        ([1.0, 0.0, -1.5], "1m forward"),
+        ([2.0, 0.0, -1.5], "2m forward"),
+        ([3.0, 0.0, -1.5], "3m forward"),
+        ([5.0, 0.0, -2.0], "5m forward, lower"),
+        ([10.0, 0.0, -1.5], "10m forward"),
+    ]
+    
+    for start_pos, desc in test_positions:
+        start = np.array(start_pos)
+        end = start + np.array([length, 0.0, 0.0])  # Forward direction
+        
+        print(f"\nTesting {desc}:")
+        print(f"Start point (LiDAR): {start}")
+        print(f"End point (LiDAR): {end}")
+        
+        # Project both points
+        pts3d = np.vstack([start, end])
+        h = np.hstack([pts3d, np.ones((len(pts3d), 1))])
+        uvw = (proj @ h.T).T
+        
+        print(f"Projected uvw: {uvw}")
+        print(f"Z values: {uvw[:, 2]}")
+        
+        valid_z = uvw[:, 2] > 0.1
+        print(f"Valid Z: {valid_z}")
+        
+        if np.all(valid_z):
+            uv = uvw[:, :2] / uvw[:, 2:3]
+            print(f"Image coordinates: {uv}")
+            
+            # Check bounds
+            in_bounds = ((uv[:, 0] >= 0) & (uv[:, 0] < img.shape[1]) & 
+                        (uv[:, 1] >= 0) & (uv[:, 1] < img.shape[0]))
+            print(f"In bounds: {in_bounds}")
+            
+            if np.all(in_bounds):
+                pt1 = tuple(uv[0].astype(int))
+                pt2 = tuple(uv[1].astype(int))
+                print(f"Drawing arrow from {pt1} to {pt2}")
+                cv2.arrowedLine(img, pt1, pt2, color, thickness=3, tipLength=0.3)
+                return pt1, pt2
+    
+    return None, None
+
+def direction_arrow_adaptive(img, calib_path, color=(0, 0, 255)):
+    """
+    Adaptive approach that finds the best arrow position automatically.
+    """
+    # Parse calibration
     data = {}
     with open(calib_path) as f:
         for line in f:
             if ':' in line:
                 k, v = line.strip().split(':', 1)
                 data[k] = np.fromstring(v, sep=' ')
-    
+
     Tr = np.eye(4)
     Tr[:3, :4] = data['Tr_velo_to_cam'].reshape(3, 4)
-    
+
     R0 = np.eye(4)
     R0[:3, :3] = data['R0_rect'].reshape(3, 3)
-    
+
     P2 = data['P2'].reshape(3, 4)
     proj = P2 @ R0 @ Tr
 
-    # Direction vector
-    R = Tr[:3, :3]
-    lidar_forward = R.T @ np.array([0, 0, 1])
-    lidar_forward = lidar_forward / np.linalg.norm(lidar_forward)
+    # Find a good starting position by testing multiple points
+    best_arrow = None
+    
+    for start_x in np.arange(1.0, 15.0, 1.0):  # Test different distances
+        for start_z in [-2.5, -2.0, -1.5, -1.0, -0.5]:  # Test different heights
+            for arrow_length in [3.0, 5.0, 7.0, 10.0]:  # Test different lengths
+                
+                start = np.array([start_x, 0.0, start_z])
+                end = start + np.array([arrow_length, 0.0, 0.0])
+                
+                # Project points
+                pts3d = np.vstack([start, end])
+                projected = project_points_safe(pts3d, proj, img.shape)
+                
+                if len(projected) == 2:
+                    pt1, pt2 = projected[0], projected[1]
+                    
+                    # Calculate arrow length in pixels
+                    pixel_length = np.linalg.norm(pt2 - pt1)
+                    
+                    # Prefer arrows that are visible and reasonably sized
+                    if 50 < pixel_length < 200:  # Good arrow size
+                        best_arrow = (pt1, pt2, pixel_length)
+                        break
+            
+            if best_arrow:
+                break
+        if best_arrow:
+            break
+    
+    if best_arrow:
+        pt1, pt2, _ = best_arrow
+        pt1 = tuple(pt1.astype(int))
+        pt2 = tuple(pt2.astype(int))
+        cv2.arrowedLine(img, pt1, pt2, color, thickness=4, tipLength=0.2)
+        return pt1, pt2
+    
+    return None, None
 
-    # Start/end in lidar space
-    start = lidar_forward * 1.0  # 1m μπροστά από το lidar
-    end   = start + lidar_forward * length
-    pts3d = np.vstack([start, end])
+#BEST
+def direction_arrow_road_surface(img, calib_path, color=(0, 0, 255)):
+    """
+    Draw arrow on the road surface where it's most likely to be visible.
+    """
+    # Parse calibration
+    data = {}
+    with open(calib_path) as f:
+        for line in f:
+            if ':' in line:
+                k, v = line.strip().split(':', 1)
+                data[k] = np.fromstring(v, sep=' ')
 
-    from_pt = project_all_points(pts3d[:1], proj, img.shape)
-    to_pt   = project_all_points(pts3d[1:], proj, img.shape)
+    Tr = np.eye(4)
+    Tr[:3, :4] = data['Tr_velo_to_cam'].reshape(3, 4)
 
-    if len(from_pt) == 1 and len(to_pt) == 1:
-        pt1 = tuple(map(int, from_pt[0]))
-        pt2 = tuple(map(int, to_pt[0]))
-        cv2.arrowedLine(img, pt1, pt2, color, thickness=3, tipLength=0.3)
+    R0 = np.eye(4)
+    R0[:3, :3] = data['R0_rect'].reshape(3, 3)
+
+    P2 = data['P2'].reshape(3, 4)
+    proj = P2 @ R0 @ Tr
+
+    # Place arrow on road surface (z ≈ -1.7m is typical road height in KITTI)
+    road_height = -1.7
+    
+    # Try different forward distances
+    for forward_dist in [8, 10, 12, 15, 20]: #if it works with 8, return else try larger
+        start = np.array([forward_dist, 0.0, road_height])
+        end = np.array([forward_dist + 6.0, 0.0, road_height])
+        
+        pts3d = np.vstack([start, end])
+        projected = project_points_safe(pts3d, proj, img.shape)
+        
+        if len(projected) == 2:
+            pt1 = tuple(projected[0].astype(int))
+            pt2 = tuple(projected[1].astype(int))
+            
+            # Draw arrow
+            cv2.arrowedLine(img, pt1, pt2, color, thickness=5, tipLength=0.25)
+            
+            # Also draw a circle at the start for better visibility
+            cv2.circle(img, pt1, 5, color, -1)
+            print(f"[INFO] Arrow drawn from {start} to {end} (forward_dist = {forward_dist}m)")
+
+            return pt1, pt2,forward_dist
+    
+    return None, None
+
+def project_points_safe(pts, P, img_shape):
+    """Safe projection that handles all edge cases."""
+    if len(pts) == 0:
+        return np.array([]).reshape(0, 2)
+    
+    # Convert to homogeneous coordinates
+    h = np.hstack([pts, np.ones((len(pts), 1))])
+    
+    # Project
+    uvw = (P @ h.T).T
+    z = uvw[:, 2]
+    
+    # Keep points in front of camera
+    valid = z > 0.1
+    
+    if not np.any(valid):
+        return np.array([]).reshape(0, 2)
+    
+    # Convert to image coordinates
+    uv = uvw[valid, :2] / z[valid, np.newaxis]
+    
+    # Filter points within image bounds (with some margin)
+    margin = 10
+    img_valid = ((uv[:, 0] >= margin) & (uv[:, 0] < img_shape[1] - margin) & 
+                (uv[:, 1] >= margin) & (uv[:, 1] < img_shape[0] - margin))
+    
+    return uv[img_valid]
 
 ##################################################################################################
 # —————————————————————————————————————— PIPELINE —————————————————————————————————————— #  
@@ -669,37 +821,37 @@ def process_frame_improved(bin_path, args):
             draw_distance_text(img, center_2d, distance, color)
 
     # Draw curbs
-    # left_uv = project(left_rough, proj)
-    # right_uv = project(right_rough, proj)
+    left_uv = project(left_rough, proj)
+    right_uv = project(right_rough, proj)
 
-    # for u, v in left_uv:
-    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-    #         cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
+    for u, v in left_uv:
+        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+            cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
     
-    # for u, v in right_uv:
-    #     if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-    #         cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
+    for u, v in right_uv:
+        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+            cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
 
     # Add legend
     draw_legend(img)
 
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacle_clusters)} obstacle clusters")
-    #pt1, pt2 = direction_arrow(img, calib_path, length=6.0, color=(255, 255, 255))
-    
-    draw_calibration_arrow(img, calib_path)
-    #print("Arrow from", pt1, "to", pt2)
-    # if pt1.any()!=None and pt2.any()!=None:
-    #     cv2.circle(img, pt1, 5, (0, 255, 0), -1)  # green: start
-    #     cv2.circle(img, pt2, 5, (255, 0, 0), -1)  # blue: end
-    cv2.imshow('Improved Road Detection', img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+
+
+    #pt1, pt2 = direction_arrow_adaptive(img, calib_path) # works!!!!
+    pt1, pt2,dist = direction_arrow_road_surface(img, calib_path) #best
+    #print(pt1,pt2)
+
+    # cv2.imshow('Improved Road Detection', img)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
     # Save image
     script_dir = Path(__file__).parent
-    output_dir = script_dir / "B1B2clean"
+    output_dir = script_dir / "B1B2B3"
     output_dir.mkdir(exist_ok=True)
-    output_img_path = output_dir / f"{frame}_B1B2_enhanced.png"
-    #cv2.imwrite(str(output_img_path), img)
+    output_img_path = output_dir / f"{frame}_d_{dist}.png"
+    cv2.imwrite(str(output_img_path), img)
     print(f"Saved at {output_img_path}")
     
     return main_road, obstacle_clusters
