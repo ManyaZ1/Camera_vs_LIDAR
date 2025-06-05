@@ -11,6 +11,7 @@ from scipy.spatial import cKDTree
 LOCAL_HEIGHT_TRESHOLD = 0.1 # adaptive_height_filtering
 HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
 
+# ----------------- basic helpers ----------------- # 
 def get_args():
     p = argparse.ArgumentParser("KITTI Velodyne viewer + road RANSAC")
     #p.add_argument("--velodyne_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_velodyne/training/velodyne")
@@ -24,7 +25,36 @@ def get_args():
     p.add_argument("--image_dir",  default="C:/Users/Mania/Documents/KITTI/data_road/training/image_2")
     
     return p.parse_args()
+ 
+def load_bin(bin_path):
+    """Load binary point cloud file"""
+    return np.fromfile(bin_path, dtype=np.float32).reshape(-1, 4)[:, :3]
 
+def parse_calib(txt: Path):
+    """Parse calibration file"""
+    data = {}
+    with open(txt) as f:
+        for line in f:
+            if ':' in line:
+                k, v = line.strip().split(':', 1)
+                data[k] = np.fromstring(v, sep=' ')
+    P2 = data['P2'].reshape(3, 4)
+    R0 = data['R0_rect'].reshape(3, 3)
+    Tr = data['Tr_velo_to_cam'].reshape(3, 4)
+    T = np.eye(4); T[:3, :4] = Tr
+    R = np.eye(4); R[:3, :3] = R0
+    P = np.eye(4); P[:3, :4] = P2
+    return P @ R @ T
+
+def project(pts, P):
+    """Project 3D points to image coordinates"""
+    h = np.hstack([pts, np.ones((len(pts), 1))])
+    uvw = (P @ h.T).T
+    z = uvw[:, 2]
+    valid = z > 0
+    uv = np.zeros((len(pts), 2), dtype=int)
+    uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
+    return uv[valid]
 
 def pc_to_o3d(xyz):
     '''Convert numpy array to Open3D PointCloud'''
@@ -32,6 +62,32 @@ def pc_to_o3d(xyz):
     pc.points = o3d.utility.Vector3dVector(xyz)
     return pc
 
+def project_all_points(pts, P, img_shape):
+    '''Project 3D points to image coordinates, return only valid points'''
+    if len(pts) == 0:
+        return np.array([]).reshape(0, 2)
+    
+    h = np.hstack([pts, np.ones((len(pts), 1))])
+    uvw = (P @ h.T).T
+    z = uvw[:, 2]
+    valid = z > 0
+    
+    uv = np.zeros((len(pts), 2), dtype=int)
+    if np.any(valid):
+        uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
+        
+        # Filter points within image bounds
+        img_valid = ((uv[:, 0] >= 0) & (uv[:, 0] < img_shape[1]) & 
+                    (uv[:, 1] >= 0) & (uv[:, 1] < img_shape[0]))
+        final_valid = valid & img_valid
+        
+        return uv[final_valid]
+    
+    return np.array([]).reshape(0, 2)
+
+####################################################################################################
+# —————————————————————————————————————— B1 road detetcion  —————————————————————————————————————— #  
+####################################################################################################
 def multi_plane_ransac(pcd, max_planes=3, dist_thresh=0.1, min_points=100):
     '''Find multiple ground planes using iterative RANSAC'''
     points = np.asarray(pcd.points)
@@ -165,6 +221,95 @@ def cluster_road_segments(points, eps=1.0, min_samples=10):
     
     return clusters
 
+# —————————————————————————————————————— sidewalk —————————————————————————————————————— #
+
+# NORMALS - PCA - SIDEWALK REMOVAL
+def compute_normals(points, radius=0.3):
+    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+    pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30))
+    return np.asarray(pcd.normals)
+
+def pca_high_variation_mask(points, radius=0.3, z_variance_thresh=0.002):
+    """
+    Return a boolean mask of points with high vertical roughness in local patch.
+    Useful for excluding curb-like areas from road points.
+    """
+    kdt = cKDTree(points[:, :2])
+    high_variance_mask = np.zeros(len(points), dtype=bool)
+    
+    for i, p in enumerate(points):
+        idx = kdt.query_ball_point(p[:2], radius) 
+        if len(idx) < 5:
+            continue
+        patch = points[idx]
+        pca = PCA(n_components=3).fit(patch)
+        # The 3rd eigenvalue (variance) is largest if there's a jump/step
+        if pca.explained_variance_[2] > z_variance_thresh:
+            high_variance_mask[i] = True
+    return high_variance_mask
+
+#UNUSED
+def find_curb_by_normals(points, verticality_thresh=0.1):
+    '''normal close to 0 means the point is on a curb(vertical surface)'''
+    normals = compute_normals(points)
+    verticality = np.abs(normals[:, 2])
+    curb_mask = verticality < verticality_thresh
+    return curb_mask
+def get_largest_cluster(points, eps=0.5, min_samples=10):
+    if len(points) == 0:
+        return np.empty((0, 3))
+
+    labels = DBSCAN(eps=eps, min_samples=min_samples).fit(points).labels_
+
+    # -1 means noise
+    valid_mask = labels != -1
+    labels = labels[valid_mask]
+    points = points[valid_mask]
+
+    if len(labels) == 0:
+        return np.empty((0, 3))
+
+    # Get label with most points
+    biggest_label = np.bincount(labels).argmax()
+    return points[labels == biggest_label]
+def detect_curb_by_height_discontinuity(points, radius=0.25, z_jump_thresh=0.12): 
+    """
+    Returns a boolean mask of points that are near vertical discontinuities in z.
+    """
+    from scipy.spatial import cKDTree
+    mask = np.zeros(len(points), dtype=bool)
+    kdt = cKDTree(points[:, :2])
+    for i, p in enumerate(points):
+        idx = kdt.query_ball_point(p[:2], radius)
+        if len(idx) < 3:
+            continue
+        local_z = points[idx, 2]
+        if local_z.max() - local_z.min() > z_jump_thresh:
+            mask[i] = True
+    return mask
+def filter_clusters_by_size(points, eps=0.8, min_samples=10, min_cluster_size=350):
+    if len(points) < min_samples:
+        return []
+    db = DBSCAN(eps=eps, min_samples=min_samples).fit(points[:, :2])
+    labels = db.labels_
+    clusters = []
+    for lbl in set(labels):
+        if lbl == -1:
+            continue  # skip noise
+        cluster = points[labels == lbl]
+        if len(cluster) >= min_cluster_size:
+            clusters.append(cluster)
+    return clusters
+def count_clusters(points, eps=0.8, min_samples=8):
+    if len(points) < min_samples:
+        return 0
+    labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(points[:, :2])
+    num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    return num_clusters
+
+#######################################################################################################
+# —————————————————————————————————————— B2 OBSTACLE DETECTION —————————————————————————————————————— #  
+#######################################################################################################
 def detect_obstacles(all_points, road_points, height_threshold=0.5, min_cluster_size=5):
     '''Detect obstacles above the road surface'''
     if len(road_points) == 0:
@@ -267,29 +412,6 @@ def draw_3d_bounding_box(img, points_3d, proj, color=(0, 255, 0), thickness=2):
         pt2 = tuple(corners_2d[i + 4])
         cv2.line(img, pt1, pt2, color, thickness)
 
-def project_all_points(pts, P, img_shape):
-    '''Project 3D points to image coordinates, return only valid points'''
-    if len(pts) == 0:
-        return np.array([]).reshape(0, 2)
-    
-    h = np.hstack([pts, np.ones((len(pts), 1))])
-    uvw = (P @ h.T).T
-    z = uvw[:, 2]
-    valid = z > 0
-    
-    uv = np.zeros((len(pts), 2), dtype=int)
-    if np.any(valid):
-        uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
-        
-        # Filter points within image bounds
-        img_valid = ((uv[:, 0] >= 0) & (uv[:, 0] < img_shape[1]) & 
-                    (uv[:, 1] >= 0) & (uv[:, 1] < img_shape[0]))
-        final_valid = valid & img_valid
-        
-        return uv[final_valid]
-    
-    return np.array([]).reshape(0, 2)
-
 def draw_distance_text(img, center_2d, distance, color):
     '''Draw distance text near the bounding box'''
     text = f"{distance:.1f}m"
@@ -311,97 +433,35 @@ def draw_distance_text(img, center_2d, distance, color):
     # Draw text
     cv2.putText(img, text, (text_x, text_y), font, font_scale, color, thickness)
 
-#sidewalk
-def filter_clusters_by_size(points, eps=0.8, min_samples=10, min_cluster_size=350):
-    if len(points) < min_samples:
-        return []
-    db = DBSCAN(eps=eps, min_samples=min_samples).fit(points[:, :2])
-    labels = db.labels_
-    clusters = []
-    for lbl in set(labels):
-        if lbl == -1:
-            continue  # skip noise
-        cluster = points[labels == lbl]
-        if len(cluster) >= min_cluster_size:
-            clusters.append(cluster)
-    return clusters
-
-def count_clusters(points, eps=0.8, min_samples=8):
-    if len(points) < min_samples:
-        return 0
-    labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(points[:, :2])
-    num_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    return num_clusters
-
-# NORMALS - PCA - SIDEWALK REMOVAL
-def compute_normals(points, radius=0.3):
-    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-    pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30))
-    return np.asarray(pcd.normals)
-
-def find_curb_by_normals(points, verticality_thresh=0.1):
-    '''normal close to 0 means the point is on a curb(vertical surface)'''
-    normals = compute_normals(points)
-    verticality = np.abs(normals[:, 2])
-    curb_mask = verticality < verticality_thresh
-    return curb_mask
-#UNUSED
-def detect_curb_by_height_discontinuity(points, radius=0.25, z_jump_thresh=0.12): 
-    """
-    Returns a boolean mask of points that are near vertical discontinuities in z.
-    """
-    from scipy.spatial import cKDTree
-    mask = np.zeros(len(points), dtype=bool)
-    kdt = cKDTree(points[:, :2])
-    for i, p in enumerate(points):
-        idx = kdt.query_ball_point(p[:2], radius)
-        if len(idx) < 3:
-            continue
-        local_z = points[idx, 2]
-        if local_z.max() - local_z.min() > z_jump_thresh:
-            mask[i] = True
-    return mask
-
-def pca_high_variation_mask(points, radius=0.3, z_variance_thresh=0.002):
-    """
-    Return a boolean mask of points with high vertical roughness in local patch.
-    Useful for excluding curb-like areas from road points.
-    """
-    kdt = cKDTree(points[:, :2])
-    high_variance_mask = np.zeros(len(points), dtype=bool)
+def draw_legend(img):
+    '''Draw distance color legend on the image'''
+    legend_y = 30
+    legend_x = img.shape[1] - 200
     
-    for i, p in enumerate(points):
-        idx = kdt.query_ball_point(p[:2], radius) 
-        if len(idx) < 5:
-            continue
-        patch = points[idx]
-        pca = PCA(n_components=3).fit(patch)
-        # The 3rd eigenvalue (variance) is largest if there's a jump/step
-        if pca.explained_variance_[2] > z_variance_thresh:
-            high_variance_mask[i] = True
-    return high_variance_mask
-
-def get_largest_cluster(points, eps=0.5, min_samples=10):
-    if len(points) == 0:
-        return np.empty((0, 3))
-
-    labels = DBSCAN(eps=eps, min_samples=min_samples).fit(points).labels_
-
-    # -1 means noise
-    valid_mask = labels != -1
-    labels = labels[valid_mask]
-    points = points[valid_mask]
-
-    if len(labels) == 0:
-        return np.empty((0, 3))
-
-    # Get label with most points
-    biggest_label = np.bincount(labels).argmax()
-    return points[labels == biggest_label]
+    distances = [5, 10, 15, 20, 30, 40]
+    labels = ["<5m", "5-10m", "10-15m", "15-20m", "20-30m", ">30m"]
+    
+    # Draw legend background
+    cv2.rectangle(img, (legend_x - 10, 10), (img.shape[1] - 10, legend_y + len(distances) * 25), 
+                  (0, 0, 0), -1)
+    cv2.rectangle(img, (legend_x - 10, 10), (img.shape[1] - 10, legend_y + len(distances) * 25), 
+                  (255, 255, 255), 2)
+    
+    # Draw legend title
+    cv2.putText(img, "Distance Legend", (legend_x, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    for i, (dist, label) in enumerate(zip(distances, labels)):
+        color = get_distance_color(dist)
+        y_pos = legend_y + 20 + i * 20
+        
+        # Draw color circle
+        cv2.circle(img, (legend_x, y_pos), 5, color, -1)
+        
+        # Draw label
+        cv2.putText(img, label, (legend_x + 15, y_pos + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
 # —————————————————————————————————————— B3 —————————————————————————————————————— #  
-
-def direction_arrow(img, calib_path, length=6.0, color=(255, 255, 255)):
+def direction_arrow(img, calib_path, length=6.0, color = (0, 0, 255)):
     """
     Σχεδιάζει ένα βέλος στην εικόνα που δείχνει την κατεύθυνση του αυτοκινήτου (προς τα εμπρός).
     Parameters:
@@ -418,40 +478,77 @@ def direction_arrow(img, calib_path, length=6.0, color=(255, 255, 255)):
                 k, v = line.strip().split(':', 1)
                 data[k] = np.fromstring(v, sep=' ')
 
-    # Reconstruct transformation matrix
+    # Restore individual matrices
     Tr = np.eye(4)
     Tr[:3, :4] = data['Tr_velo_to_cam'].reshape(3, 4)
+
+    R0 = np.eye(4)
+    R0[:3, :3] = data['R0_rect'].reshape(3, 3)
+
     P2 = data['P2'].reshape(3, 4)
-    R0 = data['R0_rect'].reshape(3, 3)
 
-    proj = np.eye(4)
-    proj[:3, :4] = P2
-    proj = proj @ np.block([[R0, np.zeros((3, 1))], [0, 0, 0, 1]]) @ Tr
+    # Final projection matrix: P = P2 · R0 · Tr
+    proj = P2 @ R0 @ Tr  # shape (3x4)
 
-    # Direction in LiDAR space (Z_cam forward)
+    # Vehicle forward direction
     R = Tr[:3, :3]
     camera_forward = np.array([0, 0, 1])
-    lidar_forward = R.T @ camera_forward 
+    lidar_forward = R.T @ camera_forward
     lidar_forward = lidar_forward / np.linalg.norm(lidar_forward)
-    print(f'lidar_forward={lidar_forward}')
-    
-    start = lidar_forward * 0.1  # 10cm μπροστά στην ίδια κατεύθυνση
+
+    # Small offset in that direction
+    start = lidar_forward * 1.
     end = start + lidar_forward * length
     pts3d = np.vstack([start, end])
-    
+    #print(start,'s',end)
     from_point = project_all_points(pts3d[:1], proj, img.shape)
     to_point   = project_all_points(pts3d[1:], proj, img.shape)
-    print(from_point,'and',to_point )
-    print("projected start Z:", (proj @ np.array([0, 0, 0, 1]))[2])
+    print(" from_point ",from_point," to_point ",to_point)
     if len(from_point) == 1 and len(to_point) == 1:
         pt1 = tuple(from_point[0])
         pt2 = tuple(to_point[0])
         cv2.arrowedLine(img, pt1, pt2, color, thickness=3, tipLength=0.3)
+    pt1 = from_point
+    pt2 = to_point
+    return pt1[0], pt2[0]
+def draw_calibration_arrow(img, calib_path, length=6.0, color=(0, 0, 255)):
+    # Calibration matrices
+    data = {}
+    with open(calib_path) as f:
+        for line in f:
+            if ':' in line:
+                k, v = line.strip().split(':', 1)
+                data[k] = np.fromstring(v, sep=' ')
+    
+    Tr = np.eye(4)
+    Tr[:3, :4] = data['Tr_velo_to_cam'].reshape(3, 4)
+    
+    R0 = np.eye(4)
+    R0[:3, :3] = data['R0_rect'].reshape(3, 3)
+    
+    P2 = data['P2'].reshape(3, 4)
+    proj = P2 @ R0 @ Tr
 
+    # Direction vector
+    R = Tr[:3, :3]
+    lidar_forward = R.T @ np.array([0, 0, 1])
+    lidar_forward = lidar_forward / np.linalg.norm(lidar_forward)
+
+    # Start/end in lidar space
+    start = lidar_forward * 1.0  # 1m μπροστά από το lidar
+    end   = start + lidar_forward * length
+    pts3d = np.vstack([start, end])
+
+    from_pt = project_all_points(pts3d[:1], proj, img.shape)
+    to_pt   = project_all_points(pts3d[1:], proj, img.shape)
+
+    if len(from_pt) == 1 and len(to_pt) == 1:
+        pt1 = tuple(map(int, from_pt[0]))
+        pt2 = tuple(map(int, to_pt[0]))
+        cv2.arrowedLine(img, pt1, pt2, color, thickness=3, tipLength=0.3)
 
 ##################################################################################################
-# —————————————————————————————————————— complete process —————————————————————————————————————— #  
-##################################################################################################
+# —————————————————————————————————————— PIPELINE —————————————————————————————————————— #  
 
 def process_frame_improved(bin_path, args):
     frame = bin_path.stem
@@ -587,7 +684,13 @@ def process_frame_improved(bin_path, args):
     draw_legend(img)
 
     print(f"Processed {frame}: {len(main_road)} road points, {len(obstacle_clusters)} obstacle clusters")
-    direction_arrow(img, calib_path, length=6.0, color=(255, 255, 255))
+    #pt1, pt2 = direction_arrow(img, calib_path, length=6.0, color=(255, 255, 255))
+    
+    draw_calibration_arrow(img, calib_path)
+    #print("Arrow from", pt1, "to", pt2)
+    # if pt1.any()!=None and pt2.any()!=None:
+    #     cv2.circle(img, pt1, 5, (0, 255, 0), -1)  # green: start
+    #     cv2.circle(img, pt2, 5, (255, 0, 0), -1)  # blue: end
     cv2.imshow('Improved Road Detection', img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
@@ -600,65 +703,6 @@ def process_frame_improved(bin_path, args):
     print(f"Saved at {output_img_path}")
     
     return main_road, obstacle_clusters
-
-def draw_legend(img):
-    '''Draw distance color legend on the image'''
-    legend_y = 30
-    legend_x = img.shape[1] - 200
-    
-    distances = [5, 10, 15, 20, 30, 40]
-    labels = ["<5m", "5-10m", "10-15m", "15-20m", "20-30m", ">30m"]
-    
-    # Draw legend background
-    cv2.rectangle(img, (legend_x - 10, 10), (img.shape[1] - 10, legend_y + len(distances) * 25), 
-                  (0, 0, 0), -1)
-    cv2.rectangle(img, (legend_x - 10, 10), (img.shape[1] - 10, legend_y + len(distances) * 25), 
-                  (255, 255, 255), 2)
-    
-    # Draw legend title
-    cv2.putText(img, "Distance Legend", (legend_x, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    
-    for i, (dist, label) in enumerate(zip(distances, labels)):
-        color = get_distance_color(dist)
-        y_pos = legend_y + 20 + i * 20
-        
-        # Draw color circle
-        cv2.circle(img, (legend_x, y_pos), 5, color, -1)
-        
-        # Draw label
-        cv2.putText(img, label, (legend_x + 15, y_pos + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-
-# Helper functions (keep your existing ones)
-def load_bin(bin_path):
-    """Load binary point cloud file"""
-    return np.fromfile(bin_path, dtype=np.float32).reshape(-1, 4)[:, :3]
-
-def parse_calib(txt: Path):
-    """Parse calibration file"""
-    data = {}
-    with open(txt) as f:
-        for line in f:
-            if ':' in line:
-                k, v = line.strip().split(':', 1)
-                data[k] = np.fromstring(v, sep=' ')
-    P2 = data['P2'].reshape(3, 4)
-    R0 = data['R0_rect'].reshape(3, 3)
-    Tr = data['Tr_velo_to_cam'].reshape(3, 4)
-    T = np.eye(4); T[:3, :4] = Tr
-    R = np.eye(4); R[:3, :3] = R0
-    P = np.eye(4); P[:3, :4] = P2
-    return P @ R @ T
-
-def project(pts, P):
-    """Project 3D points to image coordinates"""
-    h = np.hstack([pts, np.ones((len(pts), 1))])
-    uvw = (P @ h.T).T
-    z = uvw[:, 2]
-    valid = z > 0
-    uv = np.zeros((len(pts), 2), dtype=int)
-    uv[valid] = (uvw[valid, :2] / z[valid, np.newaxis]).astype(int)
-    return uv[valid]
-
 
 if __name__ == '__main__':
     a = get_args()
