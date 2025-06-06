@@ -246,9 +246,167 @@ def overlay(img, road_mask, boxes, labels):
         cv2.putText(out,lbl,(x,max(0,y-8)),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,0,255),2)
     return out
 
-# ───────────────────────── Main per‑frame ───────────────────────── #
+def create_roi_mask(shape, top_width_ratio=0.3, bottom_width_ratio=0.9, height_start=0.4):
+    """Create a trapezoidal ROI mask to focus on the expected road area"""
+    h, w = shape[:2]
+    
+    # Define trapezoid points
+    top_y = int(h * height_start)
+    bottom_y = h - 1
+    
+    top_left_x = int(w * (0.5 - top_width_ratio/2))
+    top_right_x = int(w * (0.5 + top_width_ratio/2))
+    bottom_left_x = int(w * (0.5 - bottom_width_ratio/2))
+    bottom_right_x = int(w * (0.5 + bottom_width_ratio/2))
+    
+    # Create trapezoid
+    trapezoid = np.array([
+        [top_left_x, top_y],
+        [top_right_x, top_y], 
+        [bottom_right_x, bottom_y],
+        [bottom_left_x, bottom_y]
+    ], dtype=np.int32)
+    
+    roi_mask = np.zeros(shape[:2], dtype=np.uint8)
+    cv2.fillPoly(roi_mask, [trapezoid], 255)
+    return roi_mask
 
-def process(idx: str, args):
+def filter_by_position_and_geometry(road_mask, min_bottom_width=0.4, min_area_ratio=0.05):
+    """Filter road candidates based on position and geometric constraints"""
+    h, w = road_mask.shape
+    contours, _ = cv2.findContours(road_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return np.zeros_like(road_mask)
+    
+    valid_contours = []
+    
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < (h * w * min_area_ratio):  # Too small
+            continue
+            
+        # Check if contour touches bottom of image (road should)
+        points = contour.reshape(-1, 2)
+        bottom_points = points[points[:, 1] > h * 0.8]
+        
+        if len(bottom_points) == 0:  # Doesn't touch bottom
+            continue
+            
+        # Check bottom width
+        if len(bottom_points) > 0:
+            bottom_width = bottom_points[:, 0].max() - bottom_points[:, 0].min()
+            if bottom_width < w * min_bottom_width:  # Too narrow at bottom
+                continue
+                
+        valid_contours.append(contour)
+    
+    if not valid_contours:
+        return np.zeros_like(road_mask)
+    
+    # Create mask from valid contours
+    filtered_mask = np.zeros_like(road_mask)
+    cv2.drawContours(filtered_mask, valid_contours, -1, 255, thickness=cv2.FILLED)
+    return filtered_mask
+
+def perspective_aware_trapezoid(road_mask, vanishing_point_y_ratio=0.3):
+    """Create perspective-aware trapezoid from road mask"""
+    h, w = road_mask.shape
+    
+    # Find all road pixels
+    road_pixels = np.column_stack(np.where(road_mask == 255))
+    if len(road_pixels) == 0:
+        return np.zeros_like(road_mask)
+    
+    # Group pixels by height bands
+    bands = []
+    num_bands = 10
+    for i in range(num_bands):
+        y_start = int(h * i / num_bands)
+        y_end = int(h * (i + 1) / num_bands)
+        band_pixels = road_pixels[(road_pixels[:, 0] >= y_start) & (road_pixels[:, 0] < y_end)]
+        if len(band_pixels) > 0:
+            x_coords = band_pixels[:, 1]
+            bands.append({
+                'y_center': (y_start + y_end) // 2,
+                'x_min': x_coords.min(),
+                'x_max': x_coords.max(),
+                'x_center': x_coords.mean()
+            })
+    
+    if len(bands) < 3:
+        return road_mask  # Not enough data
+    
+    # Create trapezoid points
+    trapezoid_points = []
+    
+    # Top points (narrow)
+    vanishing_y = int(h * vanishing_point_y_ratio)
+    top_bands = [b for b in bands if b['y_center'] <= vanishing_y + h*0.1]
+    if top_bands:
+        top_band = min(top_bands, key=lambda x: x['y_center'])
+        top_width = top_band['x_max'] - top_band['x_min']
+        top_center = top_band['x_center']
+        # Narrow the top for perspective
+        narrow_width = max(top_width * 0.3, 20)  # At least 20 pixels
+        trapezoid_points.extend([
+            [int(top_center - narrow_width/2), top_band['y_center']],
+            [int(top_center + narrow_width/2), top_band['y_center']]
+        ])
+    
+    # Bottom points (wide)
+    bottom_bands = [b for b in bands if b['y_center'] >= h * 0.7]
+    if bottom_bands:
+        bottom_band = max(bottom_bands, key=lambda x: x['y_center'])
+        trapezoid_points.extend([
+            [bottom_band['x_max'], bottom_band['y_center']],
+            [bottom_band['x_min'], bottom_band['y_center']]
+        ])
+    
+    if len(trapezoid_points) != 4:
+        return road_mask  # Fallback
+    
+    # Create trapezoid mask
+    trapezoid_mask = np.zeros_like(road_mask)
+    cv2.fillPoly(trapezoid_mask, [np.array(trapezoid_points, dtype=np.int32)], 255)
+    
+    return trapezoid_mask
+
+def improved_grabcut(img_bgr, coarse_mask, iterations=3):
+    """Improved GrabCut with better initialization"""
+    if not np.any(coarse_mask == 255):
+        return coarse_mask
+    
+    h, w = coarse_mask.shape
+    gmask = np.zeros((h, w), dtype=np.uint8)
+    
+    # Create a more conservative mask
+    # Erode the coarse mask to get definite foreground
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    sure_fg = cv2.erode(coarse_mask, kernel, iterations=2)
+    
+    # Dilate the coarse mask to get probable background
+    sure_bg_area = cv2.dilate(coarse_mask, kernel, iterations=3)
+    
+    # Set up GrabCut mask
+    gmask[:] = cv2.GC_PR_BGD  # Probably background
+    gmask[sure_bg_area == 0] = cv2.GC_BGD  # Definite background  
+    gmask[coarse_mask == 255] = cv2.GC_PR_FGD  # Probably foreground
+    gmask[sure_fg == 255] = cv2.GC_FGD  # Definite foreground
+    
+    # Apply GrabCut
+    bgd_model = np.zeros((1, 65), np.float64)
+    fgd_model = np.zeros((1, 65), np.float64)
+    
+    try:
+        cv2.grabCut(img_bgr, gmask, None, bgd_model, fgd_model, iterations, cv2.GC_INIT_WITH_MASK)
+        result = np.where((gmask == cv2.GC_FGD) | (gmask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+        return result
+    except:
+        return coarse_mask
+
+# Enhanced process function (replace your existing one)
+def process_enhanced(idx: str, args):
     l_img = Path(args.left_dir)/f"{idx}.png"
     r_img = Path(args.right_dir)/f"{idx}.png"
     cal   = Path(args.calib_dir)/f"{idx}.txt"
@@ -264,74 +422,58 @@ def process(idx: str, args):
     labels=[f"{yolo_classes[c]}:{s:.2f}" for c,s in zip(cids,scores)]
     obst_mask = boxes_to_mask(bxs, left.shape)
 
-    # 2. Lower‑half crop for geometry
+    # 2. Create ROI mask to focus on expected road area
+    roi_mask = create_roi_mask(left.shape)
+
+    # 3. Lower‑half crop for geometry
     h = left.shape[0]; crop = slice(h//2,None)
     left_c, right_c = left[crop,:], right[crop,:]
     l_gray, r_gray   = cv2.cvtColor(left_c,cv2.COLOR_BGR2GRAY), cv2.cvtColor(right_c,cv2.COLOR_BGR2GRAY)
     obst_crop        = obst_mask[crop,:]
+    roi_crop         = roi_mask[crop,:]
 
-    # 3. Disparity → PCD
+    # 4. Disparity → PCD
     disp = compute_disparity(l_gray, r_gray)
     Q    = parse_kitti_calib(str(cal))
     pcd, pix = disparity_to_pcd(disp, left_c, Q, obst_crop)
 
-    # 4. RANSAC plane
-    inl = segment_plane(pcd,thr=0.01, ransac_n=4, iters=1000)
+    # 5. RANSAC plane with ROI constraint
+    inl = segment_plane(pcd, thr=0.01, ransac_n=4, iters=1000)
     road_mask = np.zeros((h, left.shape[1]), np.uint8)
     pts = pix[inl]; pts[:,0]+=h//2
     road_mask[pts[:,0], pts[:,1]] = 255
-    #road_mask = refine(road_mask, k=5, iters=2)
+    
+    # Apply ROI constraint
+    road_mask = cv2.bitwise_and(road_mask, roi_mask)
 
-    # 5. GrabCut refinement - Expands too much 
-    #road_mask = grab_cut(left, road_mask, iterations=1, strong_ratio=0.1)
-
-    # 5. Post‑process road mask
+    # 6. Filter by geometry
+    road_mask = filter_by_position_and_geometry(road_mask)
+    
+    # 7. Morphological operations
     road_mask = refine(road_mask, k=5, iters=2)
 
-    # 6. Find the largest contour (or merge two largest if close in area)
-    mask_largest,contour = find_largest_contour(road_mask)
+    # 8. Create perspective-aware trapezoid
+    trap_mask = perspective_aware_trapezoid(road_mask)
 
-    # quad
-    quad_mask   = contour_to_quad(road_mask, contour)
-    vis_quad    = overlay(left, quad_mask, bxs, labels)
-    cv2.imshow("Trapezoid road", vis_quad)
+    # 9. Optional: Improved GrabCut (use sparingly)
+    # trap_mask = improved_grabcut(left, trap_mask, iterations=2)
 
-    # vanishing-point trapezoid
-    trap_mask = trapezoid_from_contour(road_mask, contour)
-    vis_trap  = overlay(left, trap_mask, bxs, labels)
-    cv2.imshow("Vanishing-point trapezoid", vis_trap)
-
-
-    vis_largest = overlay(left, mask_largest, bxs, labels)
-    cv2.imshow("RANSAC+LargestContourOnly", vis_largest)
-
-    # 6. Overlay & show
-    cv2.imshow("Road + Obstacles", overlay(left, road_mask, bxs, labels))
+    # Visualization
+    vis_original = overlay(left, road_mask, bxs, labels)
+    vis_trap = overlay(left, trap_mask, bxs, labels)
+    
+    cv2.imshow("Original RANSAC", vis_original)
+    cv2.imshow("Trapezoidal Road", vis_trap)
+    cv2.imshow("ROI Mask", roi_mask)
     
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-
-
-
-
-# ───────────────────────────── Runner ───────────────────────────── #
-
 if __name__ == "__main__":
     args = get_args()
     yolo_net, yolo_classes, yolo_layers = load_yolo(args.yolo_cfg, args.yolo_weights, args.yolo_names)
 
     if args.index.lower()=="all":
         for p in sorted(Path(args.left_dir).glob("*.png")):
-            process(p.stem, args)
+            process_enhanced(p.stem, args)
     else:
-        process(args.index, args)
-
-# add contours
-# cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
-    # all_pts = np.vstack(cnts[0])    
-    # hull = cv2.convexHull(all_pts)
-    
-    # mask_hull = np.zeros_like(road_mask)
-    # cv2.fillPoly(mask_hull, [hull], 255)
-    # vis_hull     = overlay(left, mask_hull, bxs, labels)
-    # cv2.imshow("RANSAC+Morph+ConvexHull", vis_hull) 
+        process_enhanced(args.index, args)

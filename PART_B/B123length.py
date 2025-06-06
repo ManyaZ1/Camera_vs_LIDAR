@@ -937,6 +937,7 @@ def process_frame_improved(bin_path, args):
     return main_road, obstacle_clusters
 
 if __name__ == '__main__':
+    print("Running improved road detection pipeline...")
     a = get_args()
     v_dir = Path(a.velodyne_dir)
     files = sorted(v_dir.glob('*.bin')) if a.index.lower() == 'all' else [v_dir / f"{a.index}.bin"]
