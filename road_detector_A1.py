@@ -877,7 +877,7 @@ def road_tester():
             print(f"Processing image: {filename}")
             start=time.time()
             #detect_road(image, img_path)
-            out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=img_path, debug=False)
+            out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=img_path, debug=True)
             split_lanes(image, road_hull_mask, hull, gc_mask,outpath='lane_results',imgpath=img_path)
             end=time.time()
             print(f"Time taken: {end-start:.2f} seconds")
@@ -909,7 +909,7 @@ if __name__ == "__main__":
     import os
     import time
     
-    #road_tester()
+    road_tester()
     #large_tester()
     imgpath=os.path.join(os.getcwd(), 'hardtester/um_000045.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
     image = cv2.imread(imgpath)

@@ -14,15 +14,15 @@ HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
 # ----------------- basic helpers ----------------- # 
 def get_args():
     p = argparse.ArgumentParser("KITTI Velodyne viewer + road RANSAC")
-    #p.add_argument("--velodyne_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_velodyne/training/velodyne")
-    p.add_argument("--velodyne_dir", default="C:/Users/Mania/Documents/KITTI/data_road_velodyne/training/velodyne")
+    p.add_argument("--velodyne_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_velodyne/training/velodyne")
+    #p.add_argument("--velodyne_dir", default="C:/Users/Mania/Documents/KITTI/data_road_velodyne/training/velodyne")
     p.add_argument("--index", default="all")
     p.add_argument("--dist", type=float, default=0.15)
     p.add_argument("--iters", type=int, default=1000)
-    #p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
-    #p.add_argument("--image_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
-    p.add_argument("--calib_dir", default="C:/Users/Mania/Documents/KITTI/data_road/training/calib")
-    p.add_argument("--image_dir",  default="C:/Users/Mania/Documents/KITTI/data_road/training/image_2")
+    p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
+    p.add_argument("--image_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
+    #p.add_argument("--calib_dir", default="C:/Users/Mania/Documents/KITTI/data_road/training/calib")
+    #p.add_argument("--image_dir",  default="C:/Users/Mania/Documents/KITTI/data_road/training/image_2")
     
     return p.parse_args()
  
@@ -931,7 +931,7 @@ def process_frame_improved(bin_path, args):
     output_dir = script_dir / "B1B2B3"
     output_dir.mkdir(exist_ok=True)
     output_img_path = output_dir / f"{frame}_d_{dist}.png"
-    #cv2.imwrite(str(output_img_path), img)
+    cv2.imwrite(str(output_img_path), img)
     print(f"Saved at {output_img_path}")
     
     return main_road, obstacle_clusters
