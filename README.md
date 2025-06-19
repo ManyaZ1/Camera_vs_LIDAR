@@ -14,7 +14,9 @@ pip install numpy==1.26.4
 ## Part A
 ### Questions 1 and 2
 **color space approach:** road_detector_A1.py 
+
 A2:obstacle_detection_testing_A2.py
+
 **disparity-ransac:** yolo_ransac_grabcut.py
 
 **TO DO**
