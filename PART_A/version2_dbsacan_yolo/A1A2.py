@@ -14,9 +14,10 @@ def get_args() -> argparse.Namespace:
     p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
     p.add_argument("--left_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
     p.add_argument("--right_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_right/training/image_3")
-    p.add_argument("--yolo_cfg", default="yolov3.cfg")
-    p.add_argument("--yolo_weights", default="yolov3.weights")
-    p.add_argument("--yolo_names", default="coco.names")
+    p.add_argument("--yolo_cfg", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/yolov3.cfg")
+    
+    p.add_argument("--yolo_weights", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/yolov3.weights")
+    p.add_argument("--yolo_names", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/coco.names")
     p.add_argument("--conf", type=float, default=0.5, help="YOLO confidence threshold")
     p.add_argument("--nms_thresh", type=float, default=0.4, help="YOLO NMS threshold")
     return p.parse_args()
@@ -72,7 +73,7 @@ def boxes_to_mask(boxes, shape):
 
 # ──────────────────── KITTI STEREO / RANSAC ──────────────────── #
 
-# Calibration parsing helpers (identical to old script)
+# Calibration parsing helpers 
 
 def load_kitti_calibration(calib_file):
     fx, tx = None, None
@@ -139,6 +140,7 @@ def segment_plane(pcd, dist=0.015, ransac_n=3, iters=1_000):
 
 
 def refine_mask(mask, k=5, iters=2):
+    'applies morphological closing and opening to refine a binary mask'
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
     closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=iters)
     opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, kernel, iterations=iters)
@@ -146,6 +148,7 @@ def refine_mask(mask, k=5, iters=2):
 
 
 def keep_largest(mask):
+    'keeps the largest connected component in a binary mask'
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not cnts:
         return mask
@@ -154,6 +157,12 @@ def keep_largest(mask):
     cv2.drawContours(out, [largest], -1, 255, thickness=cv2.FILLED)
     return out
 
+def draw_boxes(image, boxes, labels):
+    out = image.copy()
+    for ((x, y, w, h), lbl) in zip(boxes, labels):
+        cv2.rectangle(out, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        cv2.putText(out, lbl, (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+    return out
 
 def overlay(image, road_mask, boxes, labels):
     out = image.copy()
@@ -168,6 +177,120 @@ def overlay(image, road_mask, boxes, labels):
         cv2.putText(out, lbl, (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
     return out
 
+def connect_largest_hulls(mask):
+    mask_hull = np.zeros_like(mask)
+    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        print("[WARN] nothing detected"); return
+
+    cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+    if len(cnts) >= 2 and cv2.contourArea(cnts[1]) > 0.45 * cv2.contourArea(cnts[0]):
+        hull1= cv2.convexHull(cnts[0])
+        hull2 = cv2.convexHull(cnts[1])
+        cv2.fillPoly(mask_hull, [hull1], 255)
+        cv2.fillPoly(mask_hull, [hull2], 255)
+        road_mask= mask_hull
+        #all_pts = np.vstack([cnts[0], cnts[1]])
+    else:
+        all_pts = cnts[0]
+        hull1 = cv2.convexHull(all_pts) 
+        cv2.fillPoly(mask_hull, [hull1], 255)
+        road_mask= mask_hull
+        print("not merged")
+    return road_mask,hull1
+########## lane detection
+
+def split_lanes(image, road_hull_mask, hull, show=False,outpath=None,imgpath=None):
+    print("detecting lanes")
+    h,w, = image.shape[:2]
+    #convert to grayscale and blur
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (7, 7), 0)
+    edges = cv2.Canny(blur, 50, 150)    #binary image 255 for edge, 0 otherwise
+    #show
+    #cv2.imshow("edges",edges)
+    #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    #edges = cv2.dilate(edges, kernel, iterations=1)
+    #Region of Interest: Create a mask for the region of interest
+    mask =road_hull_mask #masked_edges=edges
+    #dilate the mask to make it bigger
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.dilate(mask, kernel, iterations=2)
+    cv2.fillPoly(mask, [hull], 255) #Inside the polygon: pixel value = 255 Outside:0
+    masked_edges = cv2.bitwise_and(edges, mask)
+    # Hough transform
+    lines = cv2.HoughLinesP(masked_edges, 1, np.pi / 360, threshold=40, minLineLength=h//4, maxLineGap=h//5)
+    
+    #mask center of road
+    coords = np.column_stack(np.where(road_hull_mask > 0)) #πιστρέφει (y, x) θέσεις των μη μηδενικών pixels.
+    if coords.size > 0:
+        mask_center_x = int(np.mean(coords[:, 1]))
+    else:
+        mask_center_x = w // 2  # fallback αν η μάσκα είναι άδεια
+    #Group lines
+    distance_thresh=w*0.07 #before 30
+    slope_thresh=0.1
+    final_lines = []
+    min_dist=abs(w//2-mask_center_x )#initial min distance
+    best_line = [w//2, h, w//2, h//2] #default line in the middle of the image
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        slope1 = (y2 - y1) / (x2 - x1 + 1e-5)
+        if abs(slope1) > 0.5:
+            center_x=int((x1+x2)/2)
+            dist = abs(center_x - mask_center_x)
+            if dist < min_dist:
+                min_dist = dist
+                best_line = line[0] 
+    left_mask = np.zeros_like(road_hull_mask)
+    right_mask = np.zeros_like(road_hull_mask)
+    x1, y1, x2, y2 = best_line
+    center_line = [(x1, y1), (x2, y2)]
+    road_mask = road_hull_mask
+    # road_mask: binary μάσκα του δρόμου
+    coords = np.column_stack(np.where(road_mask > 0))  # (y, x)
+
+    # best line
+    (x1, y1), (x2, y2) = center_line
+
+    # μάσκες εξόδου
+    left_mask = np.zeros_like(road_mask)
+    right_mask = np.zeros_like(road_mask)
+
+    for y, x in coords:
+        # Cross product για να δεις αν το σημείο (x, y) είναι αριστερά ή δεξιά
+        d = (x2 - x1)*(y - y1) - (y2 - y1)*(x - x1)
+        if d < 0:
+            left_mask[y, x] = 255
+        else:
+            right_mask[y, x] = 255
+    overlay = image.copy()
+    overlay[left_mask == 255] = (255, 0, 255)  # magenta
+    overlay[right_mask == 255] = (255, 0, 0)   # blue
+    blended = cv2.addWeighted(overlay, 0.4, image, 0.6, 0)
+    i=0
+    if outpath:
+        os.makedirs(outpath, exist_ok=True)  # <-- απαραίτητο
+
+        if imgpath:
+            img_name = os.path.basename(imgpath).split('.')[0]
+        else:
+            img_name = f'image_{i}'
+            i += 1
+
+        path = os.path.join(outpath, img_name + '_lanes.png')
+        success = cv2.imwrite(path, blended)
+        if success:
+            print(f"[INFO] Saved result to {path}")
+        else:
+            print(f"[ERROR] Failed to save image to {path}")
+    if show:
+        #old logic that didnt always show results to test many pictures stored and see the results later
+        cv2.line(blended, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        cv2.imshow("lane split semi-transparent", blended)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()        
+    return blended
 # ─────────────────────────── Main ──────────────────────────── #
 
 def process_frame(idx: str, args):
@@ -211,14 +334,23 @@ def process_frame(idx: str, args):
     pix_inliers = pixels[inliers]
     pix_inliers[:, 0] += h // 2  # shift back to full‑res coordinate space
     mask_full[pix_inliers[:, 0], pix_inliers[:, 1]] = 255
+    '''show the mask
+    #cv2.imshow("Road Mask", mask_full)'''
+    
+    #road_mask = keep_largest(refine_mask(mask_full)) #old version this and then step 6
 
-    road_mask = keep_largest(refine_mask(mask_full))
-
+    road_mask,hull = connect_largest_hulls(refine_mask(mask_full))
+    road_lanes_img = split_lanes(left_full, road_mask, hull )
+    
     # 6. Overlay
     vis = overlay(left_full, road_mask, boxes, labels)
+    final_img= draw_boxes(road_lanes_img, boxes, labels)
+    #show road_lanes with boxes and labels
 
+     
     # 7. Show
-    cv2.imshow("Road + Obstacles", vis)
+    # cv2.imshow("Road Lanes with Obstacles", final_img)
+    # cv2.imshow("Road + Obstacles", vis)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
@@ -230,7 +362,7 @@ if __name__ == "__main__":
 
     #  --index=all to process the entire folder
     if args.index.lower() == "all":
-        for img_path in sorted(Path(args.left_dir).glob("*.png")):  #  optional to see the cyclist first
+        for img_path in (Path(args.left_dir).glob("*.png")):  #  optional  sorted to see the cyclist first
             process_frame(img_path.stem, args)
     else:
         process_frame(args.index, args)

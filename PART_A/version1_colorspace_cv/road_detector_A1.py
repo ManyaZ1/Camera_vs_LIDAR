@@ -631,11 +631,12 @@ def split_lanes(image, road_hull_mask, hull, gc_mask,outpath=None,imgpath=None):
         else:
             print(f"[ERROR] Failed to save image to {path}")
     else:
+        #old logic that didnt always show results to test many pictures stored and see the results later
         cv2.line(blended, (x1, y1), (x2, y2), (0, 255, 0), 3)
         cv2.imshow("lane split semi-transparent", blended)
         cv2.waitKey(0)
         cv2.destroyAllWindows()        
-
+    return blended
     # if outpath:
     #     img_name = imgpath.split('/')[-1].split('.')[0]
     #     path=os.path.join('road_results', img_name+ '.png')
@@ -915,6 +916,7 @@ if __name__ == "__main__":
     road_tester()
     #large_tester()
     imgpath=os.path.join(os.getcwd(), 'hardtester/um_000045.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
+    # "um_000040.png" 
     image = cv2.imread(imgpath)
     if image is None:
         print("Error loading image")
