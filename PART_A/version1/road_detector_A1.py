@@ -622,7 +622,10 @@ def split_lanes(image, road_hull_mask, hull, gc_mask,outpath=None,imgpath=None):
 
         path = os.path.join(outpath, img_name + '_lanes.png')
         success = cv2.imwrite(path, blended)
-
+        cv2.line(blended, (x1, y1), (x2, y2), (0, 255, 0), 3)
+        cv2.imshow("lane split semi-transparent", blended)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         if success:
             print(f"[INFO] Saved result to {path}")
         else:
@@ -909,8 +912,8 @@ if __name__ == "__main__":
     import os
     import time
     
-    #road_tester()
-    large_tester()
+    road_tester()
+    #large_tester()
     imgpath=os.path.join(os.getcwd(), 'hardtester/um_000045.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
     image = cv2.imread(imgpath)
     if image is None:
