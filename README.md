@@ -12,12 +12,15 @@ pip install numpy==1.26.4
 ## Current Progress
 
 ## Part A
-### Questions 1 and 2
-**color space approach:** road_detector_A1.py 
 
-A2:obstacle_detection_testing_A2.py
+## Version 1
+road-lane-obstacle detection using only computer vision and color spaces without ransac:
 
-**disparity-ransac:** yolo_ransac_grabcut.py
+`road_detector_A1.py `
+`obstacle_detection_cv_A2.py`
+
+## Version 2
+road-lane-obstacle detection using yolo an disparity-ransac: partA1A2.py
 
 **TO DO**
 1. make mask more trapezoidal => improve the functions
