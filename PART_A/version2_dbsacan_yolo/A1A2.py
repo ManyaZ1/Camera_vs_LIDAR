@@ -10,7 +10,7 @@ import open3d as o3d
 # ────────────────────────── CLI ────────────────────────── #
 def get_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Road plane extraction with obstacle masking (YOLO→RANSAC).")
-    p.add_argument("--index", default="um_000019", help="KITTI frame id without extension, e.g. um_000019")
+    p.add_argument("--index", default="all", help="KITTI frame id without extension, e.g. um_000019")
     p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
     p.add_argument("--left_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
     p.add_argument("--right_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_right/training/image_3")
@@ -189,7 +189,7 @@ def process_frame(idx: str, args):
     labels = [f"{yolo_classes[c]}:{conf:.2f}" for c, conf in zip(cids, confs)]
     obstacle_mask = boxes_to_mask(boxes, left_full.shape)
 
-    # 2. Crop lower half for road extraction (like original script)
+    # 2. Crop lower half for road extraction 
     h = left_full.shape[0]
     crop_slice = slice(h // 2, None)
     left_crop_color = left_full[crop_slice, :]
@@ -228,9 +228,9 @@ if __name__ == "__main__":
     # Load YOLO once
     yolo_net, yolo_classes, yolo_layers = load_yolo(args.yolo_cfg, args.yolo_weights, args.yolo_names)
 
-    # Allow wildcards like --index=all to process the entire folder
+    #  --index=all to process the entire folder
     if args.index.lower() == "all":
-        for img_path in Path(args.left_dir).glob("*.png"):
+        for img_path in sorted(Path(args.left_dir).glob("*.png")):  #  optional to see the cyclist first
             process_frame(img_path.stem, args)
     else:
         process_frame(args.index, args)

@@ -473,7 +473,7 @@ if __name__ == "__main__":
     yolo_net, yolo_classes, yolo_layers = load_yolo(args.yolo_cfg, args.yolo_weights, args.yolo_names)
 
     if args.index.lower()=="all":
-        for p in sorted(Path(args.left_dir).glob("*.png")):
+        for p in (Path(args.left_dir).glob("*.png")):
             process_enhanced(p.stem, args)
     else:
         process_enhanced(args.index, args)
