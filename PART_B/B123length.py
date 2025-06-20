@@ -10,7 +10,7 @@ from scipy.spatial import cKDTree
 
 LOCAL_HEIGHT_TRESHOLD = 0.1 # adaptive_height_filtering
 HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
-
+#--image_dir=C:\Users\USER\Documents\GitHub\Camera_vs_LIDAR\PART_B\fakeleft --velodyne_dir=C:\Users\USER\Documents\GitHub\Camera_vs_LIDAR\PART_B\fakebin --calib_dir=C:\Users\USER\Documents\GitHub\Camera_vs_LIDAR\PART_B\fakecalib
 # ----------------- basic helpers ----------------- # 
 def get_args():
     p = argparse.ArgumentParser("KITTI Velodyne viewer + road RANSAC")
@@ -725,35 +725,55 @@ def calculate_adaptive_arrow_length(obstacle_clusters, max_length=6.0, min_lengt
     
     return arrow_length
 
-def get_closest_forward_obstacle_distance(obstacle_clusters, forward_cone_angle=15.0, min_forward_dist=0.5):
-    """
-    Find the closest obstacle in the forward direction (within a cone).
+# def get_closest_forward_obstacle_distance(obstacle_clusters, forward_cone_angle=15.0, min_forward_dist=0.5):
+#     """
+#     Find the closest obstacle in the forward direction (within a cone).
     
-    Parameters:
-    - forward_cone_angle: angle in degrees defining the forward cone
-    - min_forward_dist: minimum forward distance to consider
-    """
+#     Parameters:
+#     - forward_cone_angle: angle in degrees defining the forward cone
+#     - min_forward_dist: minimum forward distance to consider
+#     """
+#     closest_distance = float('inf')
+    
+#     for cluster in obstacle_clusters:
+#         if len(cluster) == 0:
+#             continue
+            
+#         cluster_center = np.mean(cluster, axis=0)
+        
+#         # Only consider obstacles in front of the vehicle
+#         if cluster_center[0] < min_forward_dist:
+#             continue
+            
+#         # Calculate angle from forward direction (X-axis)
+#         angle = np.abs(np.degrees(np.arctan2(cluster_center[1], cluster_center[0])))
+        
+#         # Only consider obstacles within the forward cone
+#         if angle <= forward_cone_angle / 2:
+#             distance = np.sqrt(cluster_center[0]**2 + cluster_center[1]**2)
+#             closest_distance = min(closest_distance, distance)
+    
+#     return closest_distance if closest_distance != float('inf') else float('inf')
+# Consider obstacles whose *any point* is within a forward cone (not just centroid)
+def get_closest_forward_obstacle_distance(obstacle_clusters, forward_cone_angle=20.0, min_forward_dist=0.5):
     closest_distance = float('inf')
-    
+
     for cluster in obstacle_clusters:
         if len(cluster) == 0:
             continue
-            
-        cluster_center = np.mean(cluster, axis=0)
-        
-        # Only consider obstacles in front of the vehicle
-        if cluster_center[0] < min_forward_dist:
-            continue
-            
-        # Calculate angle from forward direction (X-axis)
-        angle = np.abs(np.degrees(np.arctan2(cluster_center[1], cluster_center[0])))
-        
-        # Only consider obstacles within the forward cone
-        if angle <= forward_cone_angle / 2:
-            distance = np.sqrt(cluster_center[0]**2 + cluster_center[1]**2)
-            closest_distance = min(closest_distance, distance)
-    
+
+        for pt in cluster:
+            if pt[0] < min_forward_dist:
+                continue
+
+            angle = np.abs(np.degrees(np.arctan2(pt[1], pt[0])))
+            if angle <= forward_cone_angle / 2:
+                distance = np.linalg.norm(pt[:2])
+                closest_distance = min(closest_distance, distance)
+
     return closest_distance if closest_distance != float('inf') else float('inf')
+
+
 def project_points_safe(pts, P, img_shape):
     """Safe projection that handles all edge cases."""
     if len(pts) == 0:

@@ -18,8 +18,8 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 import cv2
-
-
+#--index=um_000090 --velodyne_dir=C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_velodyne/testing/velodyne --calib_dir=C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/testing/calib --image_dir=C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/testing/image_2 --output_dir=C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakebin
+'''--index=um_000017 --velodyne_dir=C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_velodyne/testing/velodyne --calib_dir=C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/testing/calib --image_dir=C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/testing/image_2 --output_dir=C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakebin'''
 # ──────────────── command-line arguments ──────────────── #
 
 def get_args():
@@ -41,6 +41,8 @@ def get_args():
     p.add_argument("--wall_width",  type=float, default=10.0)
     p.add_argument("--wall_height", type=float, default=2.0)
     p.add_argument("--wall_step",   type=float, default=0.1)
+    p.add_argument("--wall_depth", type=float, default=0.5, help="Thickness of the virtual wall")
+    p.add_argument("--output_dir", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakebin")
     return p.parse_args()
 
 
@@ -51,15 +53,25 @@ def load_bin(path: Path) -> np.ndarray:
     return np.fromfile(path, dtype=np.float32).reshape(-1, 4)[:, :3]
 
 
-def make_wall(x_front: float, width: float, height: float, step: float) -> np.ndarray:
-    """Regular grid of points on plane x = x_front."""
+# def make_wall(x_front: float, width: float, height: float, step: float) -> np.ndarray:
+#     """Regular grid of points on plane x = x_front."""
     
+#     y = np.arange(-width / 2,  width / 2 + step, step)
+#     z = np.arange(-height / 2, height / 2 + step, step)
+#     yy, zz = np.meshgrid(y, z)
+#     xx = np.full_like(yy, x_front)
+#     return np.stack([xx, yy, zz], axis=-1).reshape(-1, 3).astype(np.float32)
+def make_wall(x_front: float, width: float, height: float, step: float, depth: float = 0.5) -> np.ndarray:
+    """
+    Generates a volumetric wall starting at x_front, with width, height, and depth.
+    """
+    x = np.arange(x_front, x_front + depth + step, step)
     y = np.arange(-width / 2,  width / 2 + step, step)
     z = np.arange(-height / 2, height / 2 + step, step)
-    yy, zz = np.meshgrid(y, z)
-    xx = np.full_like(yy, x_front)
-    return np.stack([xx, yy, zz], axis=-1).reshape(-1, 3).astype(np.float32)
 
+    xx, yy, zz = np.meshgrid(x, y, z)
+    wall_points = np.stack([xx, yy, zz], axis=-1).reshape(-1, 3).astype(np.float32)
+    return wall_points
 
 # ──────────── calibration & projection ──────────── #
 
@@ -124,15 +136,24 @@ def main():
     bin_path   = Path(a.velodyne_dir) / f"{a.index}.bin"
     calib_path = Path(a.calib_dir)    / f"{a.index}.txt"
     img_path   = Path(a.image_dir)    / f"{a.index}.png"
-
+    output_path = Path(a.output_dir) / f"f{a.index}.bin"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     if not (bin_path.exists() and calib_path.exists() and img_path.exists()):
         raise FileNotFoundError("Some KITTI files are missing")
 
     cloud  = load_bin(bin_path)
     cloud = cloud[cloud[:, 0] > 0]  # Keep only points in front (x > 0)
-    wall   = make_wall(a.wall_x, a.wall_width, a.wall_height, a.wall_step)
+    #wall   = make_wall(a.wall_x, a.wall_width, a.wall_height, a.wall_step)
+    wall = make_wall(a.wall_x, a.wall_width, a.wall_height, a.wall_step, depth=0.5)
+
     merged = np.vstack([cloud, wall])
 
+    # ── Save merged point cloud ── #
+    merged_with_reflectance = np.hstack([merged, np.ones((merged.shape[0], 1), dtype=np.float32)])
+
+    
+    merged_with_reflectance.astype(np.float32).tofile(output_path)
+    print(f"Saved merged point cloud to {output_path}")
     # ── Open3D view ── #
     # o3d.visualization.draw_geometries(
     #     [np_to_pcd(cloud, (0.9, 0.9, 0.9)), np_to_pcd(wall, (1.0, 0.0, 0.0))],
@@ -166,6 +187,8 @@ def main():
     # Draw wall points (bigger red dots)
     for (u, v) in uv_wall:
         cv2.circle(img, (u, v), radius=4, color=(0, 0, 255), thickness=-1)
+    
+    
     cv2.imshow("Projection of full cloud (merged)", img)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
