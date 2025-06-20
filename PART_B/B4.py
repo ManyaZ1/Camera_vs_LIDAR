@@ -53,15 +53,15 @@ def load_bin(path: Path) -> np.ndarray:
     return np.fromfile(path, dtype=np.float32).reshape(-1, 4)[:, :3]
 
 
-# def make_wall(x_front: float, width: float, height: float, step: float) -> np.ndarray:
-#     """Regular grid of points on plane x = x_front."""
+def make_wall(x_front: float, width: float, height: float, step: float) -> np.ndarray:
+    """Regular grid of points on plane x = x_front."""
     
-#     y = np.arange(-width / 2,  width / 2 + step, step)
-#     z = np.arange(-height / 2, height / 2 + step, step)
-#     yy, zz = np.meshgrid(y, z)
-#     xx = np.full_like(yy, x_front)
-#     return np.stack([xx, yy, zz], axis=-1).reshape(-1, 3).astype(np.float32)
-def make_wall(x_front: float, width: float, height: float, step: float, depth: float = 0.5) -> np.ndarray:
+    y = np.arange(-width / 2,  width / 2 + step, step)
+    z = np.arange(-height / 2, height / 2 + step, step)
+    yy, zz = np.meshgrid(y, z)
+    xx = np.full_like(yy, x_front)
+    return np.stack([xx, yy, zz], axis=-1).reshape(-1, 3).astype(np.float32)
+def make_wall_super_dense(x_front: float, width: float, height: float, step: float, depth: float = 0.5) -> np.ndarray:
     """
     Generates a volumetric wall starting at x_front, with width, height, and depth.
     """

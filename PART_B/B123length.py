@@ -661,7 +661,7 @@ def direction_arrow_road_surface(img, calib_path, obstacle_clusters=None, color=
     )
     
     # Choose arrow color based on length (optional visual feedback)
-    if arrow_length < max_length * 0.3:
+    if arrow_length < max_length * 0.4:
         arrow_color = (0, 0, 255)  # Red - very close obstacles
     elif arrow_length < max_length * 0.6:
         arrow_color = (0, 165, 255)  # Orange - moderate obstacles
@@ -705,7 +705,7 @@ def direction_arrow_road_surface(img, calib_path, obstacle_clusters=None, color=
     
     return None, None, arrow_length
 
-def calculate_adaptive_arrow_length(obstacle_clusters, max_length=6.0, min_length=1.0, safe_distance=15.0):
+def calculate_adaptive_arrow_length(obstacle_clusters, max_length=6.0, min_length=1.0, safe_distance=20.0):
     """
     Calculate arrow length based on proximity of obstacles in the forward direction.
     """
