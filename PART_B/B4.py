@@ -24,16 +24,20 @@ import cv2
 
 def get_args():
     p = argparse.ArgumentParser("Velodyne cloud viewer + projection")
-    p.add_argument("--velodyne_dir",
-                   default="C:/Users/Mania/Documents/KITTI/data_road_velodyne/training/velodyne")
-    p.add_argument("--calib_dir",
-                   default="C:/Users/Mania/Documents/KITTI/data_road/training/calib")
-    p.add_argument("--image_dir",
-                   default="C:/Users/Mania/Documents/KITTI/data_road/training/image_2")
-    p.add_argument("--index", default="um_000001")
-
+    # p.add_argument("--velodyne_dir",
+    #                default="C:/Users/Mania/Documents/KITTI/data_road_velodyne/training/velodyne")
+    # p.add_argument("--calib_dir",
+    #                default="C:/Users/Mania/Documents/KITTI/data_road/training/calib")
+    # p.add_argument("--image_dir",
+    #                default="C:/Users/Mania/Documents/KITTI/data_road/training/image_2")
+    p.add_argument("--index", default="umm_000090")
+    p.add_argument("--velodyne_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_velodyne/training/velodyne")
+    #p.add_argument("--index", default="all")
+    p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
+    p.add_argument("--image_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
+    p.add_argument("--dist", type=float, default=0.15)
     # virtual wall parameters
-    p.add_argument("--wall_x",      type=float, default=15.0)
+    p.add_argument("--wall_x",      type=float, default=8.0)
     p.add_argument("--wall_width",  type=float, default=10.0)
     p.add_argument("--wall_height", type=float, default=2.0)
     p.add_argument("--wall_step",   type=float, default=0.1)

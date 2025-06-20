@@ -653,7 +653,7 @@ def direction_arrow_road_surface(img, calib_path, obstacle_clusters=None, color=
     R0[:3, :3] = data['R0_rect'].reshape(3, 3)
 
     P2 = data['P2'].reshape(3, 4)
-    proj = P2 @ R0 @ Tr
+    proj = P2 @ R0 @ Tr  # 3D→2D projection matrix
 
     # Calculate arrow length based on obstacles
     arrow_length = calculate_adaptive_arrow_length(
@@ -665,6 +665,8 @@ def direction_arrow_road_surface(img, calib_path, obstacle_clusters=None, color=
         arrow_color = (0, 0, 255)  # Red - very close obstacles
     elif arrow_length < max_length * 0.6:
         arrow_color = (0, 165, 255)  # Orange - moderate obstacles
+    elif arrow_length < max_length:
+        arrow_color = (255, 0, 255) # magenta - farther obstacles
     else:
         arrow_color = color  # Default color - safe
     
@@ -672,7 +674,8 @@ def direction_arrow_road_surface(img, calib_path, obstacle_clusters=None, color=
     road_height = -1.7
     
     # Try different forward distances
-    for forward_dist in [5, 8, 10, 12, 15, 20]:
+    # 5 too small
+    for forward_dist in [8, 10, 12, 15, 20]: # WORKS WITH 8 if sth wrong tries other distance
         start = np.array([forward_dist, 0.0, road_height])
         end = np.array([forward_dist + arrow_length, 0.0, road_height])
         
@@ -697,7 +700,7 @@ def direction_arrow_road_surface(img, calib_path, obstacle_clusters=None, color=
                     text = f"{closest_dist:.1f}m"
                     cv2.putText(img, text, (pt1[0] + 10, pt1[1] - 10), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, arrow_color, 2)
-            
+            print("FORWARD DISTANCE:", forward_dist)
             return pt1, pt2, arrow_length
     
     return None, None, arrow_length
