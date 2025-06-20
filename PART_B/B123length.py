@@ -637,6 +637,7 @@ def direction_arrow_road_surface(img, calib_path, obstacle_clusters=None, color=
     - min_length: minimum arrow length when obstacles are very close (meters)
     - safe_distance: distance beyond which obstacles don't affect arrow length (meters)
     """
+
     # Parse calibration
     data = {}
     with open(calib_path) as f:
@@ -709,7 +710,7 @@ def calculate_adaptive_arrow_length(obstacle_clusters, max_length=6.0, min_lengt
         return max_length
     
     closest_forward_distance = get_closest_forward_obstacle_distance(obstacle_clusters)
-    
+    print(f"Closest forward obstacle distance: {closest_forward_distance:.2f}m")    
     if closest_forward_distance >= safe_distance:
         return max_length
     
@@ -721,7 +722,7 @@ def calculate_adaptive_arrow_length(obstacle_clusters, max_length=6.0, min_lengt
     
     return arrow_length
 
-def get_closest_forward_obstacle_distance(obstacle_clusters, forward_cone_angle=30.0, min_forward_dist=0.5):
+def get_closest_forward_obstacle_distance(obstacle_clusters, forward_cone_angle=15.0, min_forward_dist=0.5):
     """
     Find the closest obstacle in the forward direction (within a cone).
     
@@ -919,7 +920,7 @@ def process_frame_improved(bin_path, args):
 
 
     #pt1, pt2 = direction_arrow_adaptive(img, calib_path) # works!!!!
-    pt1, pt2,dist = direction_arrow_road_surface(img, calib_path) #best
+    pt1, pt2,dist = direction_arrow_road_surface(img, calib_path,obstacle_clusters=obstacle_clusters,safe_distance=30) #best
     #print(pt1,pt2)
 
     cv2.imshow('Improved Road Detection', img)

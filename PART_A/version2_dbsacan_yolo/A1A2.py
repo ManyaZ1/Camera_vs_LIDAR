@@ -88,7 +88,6 @@ def load_kitti_calibration(calib_file):
     baseline = -tx / fx
     return fx, baseline
 
-
 def parse_kitti_calib(calib_file):
     with open(calib_file, "r") as f:
         lines = f.readlines()
@@ -101,7 +100,6 @@ def parse_kitti_calib(calib_file):
                   [0, 0, 0, fx],
                   [0, 0, -1/Tx, 0]], dtype=np.float32)
     return Q
-
 
 def compute_disparity(l_img, r_img, min_disp=0, num_disp=256, block=3):
     matcher = cv2.StereoSGBM_create(minDisparity=min_disp,
@@ -119,7 +117,6 @@ def compute_disparity(l_img, r_img, min_disp=0, num_disp=256, block=3):
     disp[disp <= 0.0] = np.nan
     return disp
 
-
 def disparity_to_pointcloud(disp, rgb, Q, obstacle_mask):
     points = cv2.reprojectImageTo3D(disp, Q)
     colors = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB) / 255.0
@@ -133,11 +130,9 @@ def disparity_to_pointcloud(disp, rgb, Q, obstacle_mask):
     pcd.colors = o3d.utility.Vector3dVector(cols)
     return pcd, pixels
 
-
 def segment_plane(pcd, dist=0.015, ransac_n=3, iters=1_000):
     _, inliers = pcd.segment_plane(distance_threshold=dist, ransac_n=ransac_n, num_iterations=iters)
     return np.array(inliers, dtype=int)
-
 
 def refine_mask(mask, k=5, iters=2):
     'applies morphological closing and opening to refine a binary mask'
@@ -145,7 +140,6 @@ def refine_mask(mask, k=5, iters=2):
     closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=iters)
     opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, kernel, iterations=iters)
     return opened
-
 
 def keep_largest(mask):
     'keeps the largest connected component in a binary mask'
@@ -337,19 +331,19 @@ def process_frame(idx: str, args):
     '''show the mask
     #cv2.imshow("Road Mask", mask_full)'''
     
-    #road_mask = keep_largest(refine_mask(mask_full)) #old version this and then step 6
-
+    #road_mask = keep_largest(refine_mask(mask_full)) #old version this and then step 7
+    # 6. Connect largest hulls and split lanes
     road_mask,hull = connect_largest_hulls(refine_mask(mask_full))
-    road_lanes_img = split_lanes(left_full, road_mask, hull )
+    road_lanes_img = split_lanes(left_full, road_mask, hull ) #show the road lanes image
     
-    # 6. Overlay
-    vis = overlay(left_full, road_mask, boxes, labels)
+    # 7. Overlay
+    #vis = overlay(left_full, road_mask, boxes, labels)
     final_img= draw_boxes(road_lanes_img, boxes, labels)
     #show road_lanes with boxes and labels
 
      
-    # 7. Show
-    # cv2.imshow("Road Lanes with Obstacles", final_img)
+    # Show
+    cv2.imshow("Road Lanes with Obstacles", final_img)
     # cv2.imshow("Road + Obstacles", vis)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
