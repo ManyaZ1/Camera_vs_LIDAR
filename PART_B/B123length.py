@@ -755,7 +755,7 @@ def calculate_adaptive_arrow_length(obstacle_clusters, max_length=6.0, min_lengt
     
 #     return closest_distance if closest_distance != float('inf') else float('inf')
 # Consider obstacles whose *any point* is within a forward cone (not just centroid)
-def get_closest_forward_obstacle_distance(obstacle_clusters, forward_cone_angle=20.0, min_forward_dist=0.5):
+def get_closest_forward_obstacle_distance(obstacle_clusters, forward_cone_angle=5.0, min_forward_dist=0.5):
     closest_distance = float('inf')
 
     for cluster in obstacle_clusters:
