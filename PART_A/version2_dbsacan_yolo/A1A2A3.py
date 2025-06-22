@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import open3d as o3d
 # the fake test A4
-'''--left_dir=C:\Users\USER\Documents\GitHub\Camera_vs_LIDAR\PART_B\fakeleft --right_dir=C:\Users\USER\Documents\GitHub\Camera_vs_LIDAR\PART_B\fakeright --calib_dir=C:\Users\USER\Documents\GitHub\Camera_vs_LIDAR\PART_B\fakecalib'''
+## --left_dir="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakeleft" --right_dir="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakeright" --calib_dir="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakecalib"
 
 # ────────────────────────── CLI ────────────────────────── #
 def get_args() -> argparse.Namespace:

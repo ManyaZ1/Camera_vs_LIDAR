@@ -144,7 +144,7 @@ def main():
     cloud  = load_bin(bin_path)
     cloud = cloud[cloud[:, 0] > 0]  # Keep only points in front (x > 0)
     #wall   = make_wall(a.wall_x, a.wall_width, a.wall_height, a.wall_step)
-    wall = make_wall(a.wall_x, a.wall_width, a.wall_height, a.wall_step, depth=0.5)
+    wall = make_wall(a.wall_x, a.wall_width, a.wall_height, a.wall_step)
 
     merged = np.vstack([cloud, wall])
 
