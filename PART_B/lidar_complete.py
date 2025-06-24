@@ -8,6 +8,7 @@ from pathlib import Path
 import argparse
 from sklearn.decomposition import PCA
 from scipy.spatial import cKDTree
+from skimage.morphology import skeletonize
 
 LOCAL_HEIGHT_TRESHOLD = 0.1 # adaptive_height_filtering
 HEIGHT_VARIATION_THRESHOLD = 0.1  # road_continuity_filter
@@ -23,30 +24,14 @@ def get_args():
     #p.add_argument("--iters", type=int, default=1000)
     p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
     p.add_argument("--image_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
+    p.add_argument("--curbs", action="store_true", help="Enable curb visualization")
+    p.add_argument("--testing", action="store_true", help="Use KITTI testing set instead of training")
+    p.add_argument("--kitti", action="store_true", help="Run full KITTI training pipeline")
     #p.add_argument("--calib_dir", default="C:/Users/Mania/Documents/KITTI/data_road/training/calib")
     #p.add_argument("--image_dir",  default="C:/Users/Mania/Documents/KITTI/data_road/training/image_2")
-    
+    p.add_argument("--video", action="store_true", help="Enable automatic video playback mode")
     return p.parse_args()
 
-# question B4 wall detection mode
-def run_wall_test():
-    class Args:
-        velodyne_dir = "C:\\Users\\USER\\Documents\\GitHub\\Camera_vs_LIDAR\\PART_B\\fakebin"
-        calib_dir = "C:\\Users\\USER\\Documents\\GitHub\\Camera_vs_LIDAR\\PART_B\\fakecalib"
-        image_dir = "C:\\Users\\USER\\Documents\\GitHub\\Camera_vs_LIDAR\\PART_B\\fakeleft"
-        index = "all"  # Or any specific frame ID
-        dist = 0.15
-        iters = 1000
-    
-    a = Args()
-    v_dir = Path(a.velodyne_dir)
-    files = sorted(v_dir.glob('*.bin')) if a.index.lower() == 'all' else [v_dir / f"{a.index}.bin"]
-    
-    for f in files:
-        if f.exists():
-            process_frame_improved(f, a)
-        else:
-            print(f"missing {f}")
 
 # KITTI dataset processing
 def load_bin(bin_path):
@@ -294,7 +279,7 @@ def remove_sidewalks(road_points):
         rough_points = np.array([]).reshape(0, 3)
     # Median y of road
     road_center_y = np.median(main_road[:, 1]) if len(main_road) > 0 else 0
-    print(main_road.shape)
+    #print(main_road.shape)
     #road_center_y = 0.0
     left_curb_y, right_curb_y,left_rough,right_rough = split_rough_by_side(rough_points, road_center_y)    
     main_road = main_road[(main_road[:, 1] > left_curb_y) & (main_road[:, 1] < right_curb_y)]   
@@ -313,10 +298,28 @@ def split_rough_by_side(rough_points, center_y, MIN_CANDIDATES=300):
     left_rough = rough_points[rough_points[:, 1] < center_y]
     right_rough = rough_points[rough_points[:, 1] > center_y]
 
-    left_curb_y = np.percentile(left_rough[:, 1], 95) if len(left_rough) > MIN_CANDIDATES else -np.inf
-    right_curb_y = np.percentile(right_rough[:, 1], 5) if len(right_rough) > MIN_CANDIDATES else np.inf
+    left_curb_y = np.percentile(left_rough[:, 1], 95) if len(left_rough) > MIN_CANDIDATES else -np.inf   # rightmost Y of left curb
+    right_curb_y = np.percentile(right_rough[:, 1], 5) if len(right_rough) > MIN_CANDIDATES else np.inf  # leftmost Y of right curb
 
     return left_curb_y, right_curb_y, left_rough, right_rough
+
+# def filter_connected_points(points, search_radius=1.0, min_neighbors=5):
+#     """
+#     Given a set of points (e.g., rough/curb points), keep only those that
+#     have enough nearby neighbors — i.e., are not isolated.
+#     """
+#     if len(points) < min_neighbors:
+#         return np.empty((0, 3))
+
+#     tree = cKDTree(points[:, :2])  # 2D neighborhood
+#     keep = []
+
+#     for i, pt in enumerate(points):
+#         neighbors = tree.query_ball_point(pt[:2], search_radius)
+#         if len(neighbors) >= min_neighbors:
+#             keep.append(i)
+
+#     return points[keep]
 
 #UNUSED:
 def find_curb_by_normals(points, verticality_thresh=0.1):
@@ -697,7 +700,9 @@ def process_frame_improved(bin_path, args):
     if not (img_path.exists() and calib_path.exists()):
         print(f"[WARN] missing assets for {frame}")
         return
-
+    # Visualization
+    proj = parse_calib(calib_path)
+    img = cv2.imread(str(img_path))
     # Load and preprocess
     xyz = load_bin(bin_path)
     xyz = xyz[np.abs(xyz[:, 1]) < 10.0]  # Wider lateral crop initially
@@ -706,7 +711,8 @@ def process_frame_improved(bin_path, args):
     # Height-based filtering to remove obviously non-ground points
     xyz = xyz[xyz[:, 2] > -3.0]  # Remove points too far below
     xyz = xyz[xyz[:, 2] < 2.0]   # Remove points too far above
-    
+    # !!!Enforce deterministic ordering before downsampling
+    xyz = xyz[np.lexsort((xyz[:, 2], xyz[:, 1], xyz[:, 0]))]
     pcd = pc_to_o3d(xyz).voxel_down_sample(0.08)  # Finer voxel grid
     
     # Multi-plane RANSAC
@@ -730,8 +736,11 @@ def process_frame_improved(bin_path, args):
 
     # CLUSTER ROAD AND REMOVE SIDEWALK
     
-    main_road,left_rough,right_rough = remove_sidewalks(road_points)   
+    main_road,left_rough,right_rough =remove_sidewalks(road_points)   
 
+    # debug : to see mask with no curbs removed run the line below                !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    #main_road=road_points
+    
     # Detect obstacles
     obstacles = detect_obstacles(np.asarray(pcd.points), main_road, 
                                height_threshold=0.4, min_cluster_size=3)
@@ -739,9 +748,7 @@ def process_frame_improved(bin_path, args):
     # Cluster obstacles into individual objects
     obstacle_clusters = cluster_obstacles(obstacles, eps=1.2, min_samples=8)
     
-    # Visualization
-    proj = parse_calib(calib_path)
-    img = cv2.imread(str(img_path))
+    
     
     # Project and draw road points (blue)
     if len(main_road) > 0:
@@ -778,16 +785,17 @@ def process_frame_improved(bin_path, args):
             draw_distance_text(img, center_2d, distance, color)
 
     # Draw curbs
-    left_uv = project(left_rough, proj)
-    right_uv = project(right_rough, proj)
+    if getattr(args, "curbs", False):
+        left_uv = project(left_rough, proj)
+        right_uv = project(right_rough, proj)
 
-    for u, v in left_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
-    
-    for u, v in right_uv:
-        if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
-            cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
+        for u, v in left_uv:
+            if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+                cv2.circle(img, (u, v), 2, (0, 255, 255), -1)  # Yellow
+        
+        for u, v in right_uv:
+            if 0 <= u < img.shape[1] and 0 <= v < img.shape[0]:
+                cv2.circle(img, (u, v), 2, (0, 255, 0), -1)  # Green
 
     # Add legend
     draw_legend(img)
@@ -799,31 +807,182 @@ def process_frame_improved(bin_path, args):
     pt1, pt2,dist = direction_arrow_road_surface(img, calib_path,obstacle_clusters=obstacle_clusters,safe_distance=30) #best
     #print(pt1,pt2)
 
-    cv2.imshow('Improved Road Detection', img)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #cv2.imshow('Improved Road Detection', img)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     # Save image
     script_dir = Path(__file__).parent
     output_dir = script_dir / "B1B2B3"
     output_dir.mkdir(exist_ok=True)
     output_img_path = output_dir / f"{frame}_d_{dist}.png"
-    cv2.imwrite(str(output_img_path), img)
-    print(f"Saved at {output_img_path}")
+    #cv2.imwrite(str(output_img_path), img)
+    #print(f"Saved at {output_img_path}")
+
+
+    return img, dist
+    #return main_road, obstacle_clusters
+
+# B1-B2-B3
+def run_selected_indexes():
+    class Args:
+        def __init__(self, velodyne_dir, calib_dir, image_dir, curbs=False):
+            self.velodyne_dir = velodyne_dir
+            self.calib_dir = calib_dir
+            self.image_dir = image_dir
+            self.curbs = curbs
+
+    # --- Define your test and train indexes separately
+    testing_indexes = ["um_000000", "um_000001","um_000008","um_000009"]
+    training_indexes = ["um_000000", "um_000053","um_000023","um_000007","um_000008","um_000043","um_000011","um_000068","um_000025","um_000027","um_000028","um_000030","um_000032","um_000033","um_000037","um_000046","um_000053","um_000003"]
+    extra_training= [ "um_000013","um_000001","um_000016","um_000019","um_000021"]
+
+    # --- Define your base paths
+    base = "C:/Users/USER/Documents/_CAMERA_LIDAR/data_road"
     
-    return main_road, obstacle_clusters
+    # --- Testing mode
+    testing_args = Args(
+        velodyne_dir=f"{base}_velodyne/testing/velodyne",
+        calib_dir=f"{base}/testing/calib",
+        image_dir=f"{base}/testing/image_2",
+        curbs=False
+    )
+    run_index_list(testing_indexes, testing_args)
+
+    # --- Training mode
+    training_args = Args(
+        velodyne_dir=f"{base}_velodyne/training/velodyne",
+        calib_dir=f"{base}/training/calib",
+        image_dir=f"{base}/training/image_2",
+        curbs=False
+    )
+    run_index_list(training_indexes, training_args)
+
+def run_index_list(index_list, args):
+    v_dir = Path(args.velodyne_dir)
+    for idx in index_list:
+        f = v_dir / f"{idx}.bin"
+        if f.exists():
+            print(f"[INFO] Processing {f.name} from {args.velodyne_dir}")
+            img, _ = process_frame_improved(f, args)
+            cv2.imshow("Selected Frame Viewer", img)
+            key = cv2.waitKey(0)
+            cv2.destroyAllWindows()  
+            if key == 27:  # ESC to exit early
+                break
+        else:
+            print(f"[MISSING] {f}")
+    cv2.destroyAllWindows()
+
+
+# question B4 wall detection mode
+def run_wall_test():
+    class Args:
+        velodyne_dir = "C:\\Users\\USER\\Documents\\GitHub\\Camera_vs_LIDAR\\PART_B\\fakebin"
+        calib_dir = "C:\\Users\\USER\\Documents\\GitHub\\Camera_vs_LIDAR\\PART_B\\fakecalib"
+        image_dir = "C:\\Users\\USER\\Documents\\GitHub\\Camera_vs_LIDAR\\PART_B\\fakeleft"
+        index = "all"  # Or any specific frame ID
+        dist = 0.15
+        iters = 1000
+    
+    a = Args()
+    v_dir = Path(a.velodyne_dir)
+    files = sorted(v_dir.glob('*.bin')) if a.index.lower() == 'all' else [v_dir / f"{a.index}.bin"]
+    
+    for f in files:
+        if f.exists():
+            process_frame_improved(f, a)
+        else:
+            print(f"missing {f}")
+
+def run_interactive(file_list, args):
+    for f in file_list:
+        if f.exists():
+            img, _ = process_frame_improved(f, args)
+            cv2.imshow("Improved Road Detection", img)
+            key = cv2.waitKey(0)
+            cv2.destroyAllWindows()
+            if key == 27:  # ESC
+                break
+        else:
+            print(f"[MISSING] {f}")
+    cv2.destroyAllWindows()
+
+def run_video_playback(file_list, args, delay=100):
+    for f in file_list:
+        if f.exists():
+            img, _ = process_frame_improved(f, args)
+            cv2.imshow("KITTI Video Mode", img)
+            key = cv2.waitKey(delay)
+            if key == 27:  # ESC to break
+                break
+        else:
+            print(f"[MISSING] {f}")
+    cv2.destroyAllWindows()
+
+def run_video_mode(file_list, args, output_path="output_video.avi"):
+    first_img = None
+    all_frames = []
+
+    for f in file_list:
+        if f.exists():
+            print(f"[INFO] Processing {f.name}")
+            img, _ = process_frame_improved(f, args)
+            if first_img is None:
+                first_img = img
+            all_frames.append(img)
+        else:
+            print(f"[WARN] Missing {f}")
+
+    if not all_frames:
+        print("[ERROR] No frames to write")
+        return
+
+    # Initialize video writer
+    height, width = first_img.shape[:2]
+    out = cv2.VideoWriter(
+        output_path,
+        cv2.VideoWriter_fourcc(*'XVID'),
+        10.0,  # FPS
+        (width, height)
+    )
+
+    for frame in all_frames:
+        out.write(frame)
+
+    out.release()
+    print(f"[VIDEO SAVED] → {output_path}")
 
 if __name__ == '__main__':
+    # erotima B4
     if "--wall" in sys.argv:
         print("Running road detection pipeline for B4: added wall...")
         run_wall_test()
-    else:
+    # debug run for entire kitti dataset
+    elif "--kitti" in sys.argv:
         print("Running road detection pipeline for KITTI Dataset...")
         a = get_args()
+
+        # Swap to testing paths if requested
+        if a.testing:
+            print("Testing mode activated: swapping 'training' → 'testing'")
+            a.velodyne_dir = a.velodyne_dir.replace("training", "testing")
+            a.calib_dir = a.calib_dir.replace("training", "testing")
+            a.image_dir = a.image_dir.replace("training", "testing")
+
         v_dir = Path(a.velodyne_dir)
         files = sorted(v_dir.glob('*.bin')) if a.index.lower() == 'all' else [v_dir / f"{a.index}.bin"]
-        for f in files:
-            if f.exists():
-                process_frame_improved(f, a)
-            else:
-                print(f"missing {f}")
+        # for f in files:
+        #     if f.exists():
+        #         process_frame_improved(f, a)
+        #     else:
+        #         print(f"missing {f}")
+        if a.video:
+            run_video_playback(files, a, delay=1)
+            
+        else:
+            run_interactive(files, a)
+    # erotima B1B2B3
+    else:
+        print("Running road detection pipeline: B1-B2-B3...")
+        run_selected_indexes()

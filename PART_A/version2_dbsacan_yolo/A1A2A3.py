@@ -230,6 +230,8 @@ def split_lanes(image, road_hull_mask, hull, show=False,outpath=None,imgpath=Non
     min_dist=abs(w//2-mask_center_x )#initial min distance
     best_line = [w//2, h, w//2, h//2] #default line in the middle of the image
     for line in lines:
+        if y1 < y2:
+            x1, y1, x2, y2 = x2, y2, x1, y1  # swap endpoints
         x1, y1, x2, y2 = line[0]
         slope1 = (y2 - y1) / (x2 - x1 + 1e-5)
         if abs(slope1) > 0.5:
@@ -384,7 +386,7 @@ def process_frame(idx: str, args):
     l_path = Path(args.left_dir) / f"{idx}.png"
     r_path = Path(args.right_dir) / f"{idx}.png"
     c_path = Path(args.calib_dir) / f"{idx}.txt"
-    print(f"lpath={l_path} rpath={r_path} cpath={c_path}")
+    #print(f"lpath={l_path} rpath={r_path} cpath={c_path}")
 
     if not l_path.is_file():
         sys.exit(f"Left image {l_path} not found")
@@ -438,10 +440,10 @@ def process_frame(idx: str, args):
     #direction_arrow(final_img, P2, Q, arrow_length=11.0, road_height=1.7, color=(0, 255, 0))
     #show road_lanes with boxes and labels
 
-     
+    print(f"[INFO] Processed frame {idx} with {len(boxes)} obstacles detected.") 
     # Show
     cv2.imshow("Road Lanes with Obstacles", final_img)
-    # cv2.imshow("Road + Obstacles", vis)
+    #cv2.imshow("Road + Obstacles", vis)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 

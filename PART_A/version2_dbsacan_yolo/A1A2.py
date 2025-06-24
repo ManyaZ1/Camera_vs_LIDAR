@@ -291,7 +291,7 @@ def process_frame(idx: str, args):
     l_path = Path(args.left_dir) / f"{idx}.png"
     r_path = Path(args.right_dir) / f"{idx}.png"
     c_path = Path(args.calib_dir) / f"{idx}.txt"
-    print(f"lpath={l_path} rpath={r_path} cpath={c_path}")
+    #print(f"lpath={l_path} rpath={r_path} cpath={c_path}")
 
     if not l_path.is_file():
         sys.exit(f"Left image {l_path} not found")
