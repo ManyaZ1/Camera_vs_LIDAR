@@ -2,7 +2,7 @@ import argparse
 import os
 from pathlib import Path
 import sys
-
+import time
 import cv2
 import numpy as np
 import open3d as o3d
@@ -16,12 +16,18 @@ def get_args() -> argparse.Namespace:
     p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
     p.add_argument("--left_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
     p.add_argument("--right_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_right/training/image_3")
-    p.add_argument("--yolo_cfg", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/yolov3.cfg")
-    
-    p.add_argument("--yolo_weights", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/yolov3.weights")
-    p.add_argument("--yolo_names", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/coco.names")
+    p.add_argument("--yolo_cfg", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/stereoVersion/yolov3.cfg")
+    p.add_argument("--yolo_weights", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/stereoVersion/yolov3.weights")
+    p.add_argument("--yolo_names", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/stereoVersion/coco.names")
     p.add_argument("--conf", type=float, default=0.5, help="YOLO confidence threshold")
     p.add_argument("--nms_thresh", type=float, default=0.4, help="YOLO NMS threshold")
+    
+    # Modes
+    p.add_argument("--kitti", action="store_true", help="Run over full training set")
+    p.add_argument("--wall", action="store_true", help="Run wall detection test")
+    p.add_argument("--testing", action="store_true", help="Use KITTI testing set instead of training")
+    p.add_argument("--video", action="store_true", help="Run in video mode")
+    
     return p.parse_args()
 
 # ──────────────────────── YOLO DETECTION ──────────────────────── #
@@ -152,6 +158,32 @@ def keep_largest(mask):
     out = np.zeros_like(mask)
     cv2.drawContours(out, [largest], -1, 255, thickness=cv2.FILLED)
     return out
+def filter_by_center(mask, center_margin=20):
+    H, W = mask.shape
+    center_x = W // 2
+    band_min = center_x - center_margin
+    band_max = center_x + center_margin
+    #band = slice(center_x - center_margin, center_x + center_margin)
+
+    # Find connected components
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+
+    keep_mask = np.zeros_like(mask)
+
+    for i in range(1, num_labels):  # skip background (label 0)
+        x, _, w, _, area = stats[i]
+        if area < 50:
+            continue
+        comp_x1 = x
+        comp_x2 = x + w
+        #if (comp_x1<=band_min and comp_x2 >= band_max) or (comp_x1 <= band_min and comp_x2 >= band_min) or (comp_x1 <= band_max and comp_x2 >= band_max):
+        if comp_x2 >= band_min and comp_x1 <= band_max:
+            keep_mask[labels == i] = 255
+        # # Check if this component overlaps the center region
+        # if (x <= center_x <= x + w) or (center_x >= x and center_x <= x + w):
+        #     keep_mask[labels == i] = 255
+
+    return keep_mask
 
 def draw_boxes(image, boxes, labels):
     out = image.copy()
@@ -177,7 +209,8 @@ def connect_largest_hulls(mask):
     mask_hull = np.zeros_like(mask)
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not cnts:
-        print("[WARN] nothing detected"); return
+        print("[WARN] nothing detected"); 
+        return None, None
 
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
     if len(cnts) >= 2 and cv2.contourArea(cnts[1]) > 0.45 * cv2.contourArea(cnts[0]):
@@ -216,7 +249,13 @@ def split_lanes(image, road_hull_mask, hull, show=False,outpath=None,imgpath=Non
     masked_edges = cv2.bitwise_and(edges, mask)
     # Hough transform
     lines = cv2.HoughLinesP(masked_edges, 1, np.pi / 360, threshold=40, minLineLength=h//4, maxLineGap=h//5)
-    
+    if lines is None:
+        print("[INFO] No Hough lines found — skipping lane split.")
+        # Return full road mask overlay
+        overlay = image.copy()
+        overlay[road_hull_mask == 255] = (255, 0, 0)  # blue
+        blended = cv2.addWeighted(overlay, 0.4, image, 0.6, 0)
+        return blended
     #mask center of road
     coords = np.column_stack(np.where(road_hull_mask > 0)) #πιστρέφει (y, x) θέσεις των μη μηδενικών pixels.
     if coords.size > 0:
@@ -228,11 +267,13 @@ def split_lanes(image, road_hull_mask, hull, show=False,outpath=None,imgpath=Non
     slope_thresh=0.1
     final_lines = []
     min_dist=abs(w//2-mask_center_x )#initial min distance
-    best_line = [w//2, h, w//2, h//2] #default line in the middle of the image
+
+    best_line = None
+    #best_line = [w//2, h, w//2, h//2] #default line in the middle of the image
     for line in lines:
+        x1, y1, x2, y2 = line[0]
         if y1 < y2:
             x1, y1, x2, y2 = x2, y2, x1, y1  # swap endpoints
-        x1, y1, x2, y2 = line[0]
         slope1 = (y2 - y1) / (x2 - x1 + 1e-5)
         if abs(slope1) > 0.5:
             center_x=int((x1+x2)/2)
@@ -240,9 +281,20 @@ def split_lanes(image, road_hull_mask, hull, show=False,outpath=None,imgpath=Non
             if dist < min_dist:
                 min_dist = dist
                 best_line = line[0] 
+    if best_line is None:
+        print("[INFO] No valid center line found — skipping lane split.")
+        # Return image with whole road mask highlighted (no split)
+        overlay = image.copy()
+        road_color = (255, 0, 0)  # blue
+        overlay[road_hull_mask == 255] = road_color
+        blended = cv2.addWeighted(overlay, 0.4, image, 0.6, 0)
+        return blended
     left_mask = np.zeros_like(road_hull_mask)
     right_mask = np.zeros_like(road_hull_mask)
     x1, y1, x2, y2 = best_line
+    # Enforce consistent bottom-to-top direction
+    if y1 < y2:
+        x1, y1, x2, y2 = x2, y2, x1, y1
     center_line = [(x1, y1), (x2, y2)]
     road_mask = road_hull_mask
     # road_mask: binary μάσκα του δρόμου
@@ -250,6 +302,7 @@ def split_lanes(image, road_hull_mask, hull, show=False,outpath=None,imgpath=Non
 
     # best line
     (x1, y1), (x2, y2) = center_line
+    
 
     # μάσκες εξόδου
     left_mask = np.zeros_like(road_mask)
@@ -265,6 +318,8 @@ def split_lanes(image, road_hull_mask, hull, show=False,outpath=None,imgpath=Non
     overlay = image.copy()
     overlay[left_mask == 255] = (255, 0, 255)  # magenta
     overlay[right_mask == 255] = (255, 0, 0)   # blue
+    # Draw detected center line in green
+    cv2.line(overlay, (x1, y1), (x2, y2), (0, 0, 250), 2)
     blended = cv2.addWeighted(overlay, 0.4, image, 0.6, 0)
     i=0
     if outpath:
@@ -423,12 +478,18 @@ def process_frame(idx: str, args):
     pix_inliers = pixels[inliers]
     pix_inliers[:, 0] += h // 2  # shift back to full‑res coordinate space
     mask_full[pix_inliers[:, 0], pix_inliers[:, 1]] = 255
+    mask_full = filter_by_center(mask_full, center_margin=15)
     '''show the mask
     #cv2.imshow("Road Mask", mask_full)'''
     
     #road_mask = keep_largest(refine_mask(mask_full)) #old version this and then step 7
     # 6. Connect largest hulls and split lanes
-    road_mask,hull = connect_largest_hulls(refine_mask(mask_full))
+    #road_mask,hull = connect_largest_hulls(refine_mask(mask_full))
+    result = connect_largest_hulls(refine_mask(mask_full))
+    if result is None or result[0] is None:
+        print(f"[INFO] Skipping frame {idx}: no valid road region found.")
+        return None
+    road_mask, hull = result
     road_lanes_img = split_lanes(left_full, road_mask, hull ) #show the road lanes image
     
     # 7. Overlay
@@ -442,21 +503,162 @@ def process_frame(idx: str, args):
 
     print(f"[INFO] Processed frame {idx} with {len(boxes)} obstacles detected.") 
     # Show
-    cv2.imshow("Road Lanes with Obstacles", final_img)
-    #cv2.imshow("Road + Obstacles", vis)
-    cv2.waitKey(0)
+    # cv2.imshow("Road Lanes with Obstacles", final_img)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    return final_img
+
+#video
+
+def run_video_playback(args, fps=25, save_path=None):
+    frame_paths = sorted(Path(args.left_dir).glob("*.png"))
+    if not frame_paths:
+        print("[ERROR] No frames found.")
+        return
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True) if save_path else None
+
+    writer = None
+    last_time = time.time()
+
+    for f in frame_paths:
+        idx = f.stem
+        frame = process_frame(idx, args)
+        if frame is None:
+            continue
+
+        # Init writer if needed
+        if save_path and writer is None:
+            height, width = frame.shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')  # or 'MP4V' for .mp4
+            writer = cv2.VideoWriter(str(save_path), fourcc, fps, (width, height))
+
+        # Save at real FPS (write every frame)
+        if writer:
+            writer.write(frame)
+
+        # Show as fast as possible (non-blocking)
+        cv2.imshow("Live Video", frame)
+        key = cv2.waitKey(1)
+        if key == 27:
+            break
+
+        # Optional: throttle console prints to match video
+        now = time.time()
+        if now - last_time >= 1 / fps:
+            print(f"[INFO] Frame: {idx}")
+            last_time = now
+
     cv2.destroyAllWindows()
+    if writer:
+        writer.release()
+        print(f"[INFO] Video saved to {save_path}")
+
+def run_wall_test():
+    print("[INFO] Running wall test using fake KITTI inputs")
+
+    # Override the data directories
+    args.left_dir = "C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakeleft"
+    args.right_dir = "C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakeright"
+    args.calib_dir = "C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_B/fakecalib"
+
+    frame_paths = sorted(Path(args.left_dir).glob("*.png"))
+    for img_path in frame_paths:
+        idx = img_path.stem
+        frame = process_frame(idx, args)
+        show_frame(frame, title="Processed Frame")
+        
+
+# def run_video_playback(args, fps=25):
+#     #delay = int(1000 / fps)  # Convert FPS to milliseconds
+#     delay=1
+#     frame_paths = sorted(Path(args.left_dir).glob("*.png"))
+#     for f in frame_paths:
+#         idx = f.stem
+#         print(f"[INFO] Video mode: {idx}")
+#         frame = process_frame(idx, args)
+#         if frame is None:
+#             continue
+#         cv2.imshow("Camera Lane Detection (Video Mode)", frame)
+#         if cv2.waitKey(delay) == 27:  # ESC to quit early
+#             break
+
+#     cv2.destroyAllWindows()
+
+def show_frame(frame, title="Processed Frame"):
+    cv2.imshow(title, frame)
+    key = cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    if key == 27:  # ESC to quit
+        sys.exit(0)
+
 
 # TO DO RUN ON SELECTED FRAMES
 
 if __name__ == "__main__":
     args = get_args()
-    # Load YOLO once
     yolo_net, yolo_classes, yolo_layers = load_yolo(args.yolo_cfg, args.yolo_weights, args.yolo_names)
+    cur_dir = Path(__file__).parent.resolve()
+    video_save_path = cur_dir / "output_video.avi"  # Default save path for video output
+    # Handle --wall (placeholder)
+    if args.wall:
+        print("[INFO] Wall mode selected (TODO)")
+        run_wall_test()
+        sys.exit(0)
 
-    #  --index=all to process the entire folder
+    # Handle --video
+    if args.video:
+        print("[INFO] Video mode selected")
+        if args.testing:
+            print("[INFO] Testing set video playback")
+            args.left_dir = args.left_dir.replace("training", "testing")
+            args.right_dir = args.right_dir.replace("training", "testing")
+            args.calib_dir = args.calib_dir.replace("training", "testing")
+        run_video_playback(args, fps=4, save_path=video_save_path)
+        sys.exit(0)
+
+    # Handle --kitti (training, interactive mode)
+    if args.kitti:
+        print("[INFO] Interactive mode over full KITTI training set")
+        for img_path in sorted(Path(args.left_dir).glob("*.png")):
+            idx = img_path.stem
+            frame = process_frame(idx, args)
+            if frame is None:
+                continue
+            cv2.imshow("KITTI Training (Interactive)", frame)
+            key = cv2.waitKey(0)
+            cv2.destroyAllWindows()
+            if key == 27:
+                break
+        sys.exit(0)
+
+    # Handle --testing (interactive testing set)
+    if args.testing:
+        print("[INFO] Interactive mode over KITTI testing set")
+        args.left_dir = args.left_dir.replace("training", "testing")
+        args.right_dir = args.right_dir.replace("training", "testing")
+        args.calib_dir = args.calib_dir.replace("training", "testing")
+        for img_path in sorted(Path(args.left_dir).glob("*.png")):
+            idx = img_path.stem
+            frame = process_frame(idx, args)
+            if frame is None:
+                continue
+            cv2.imshow("KITTI Testing (Interactive)", frame)
+            key = cv2.waitKey(0)
+            cv2.destroyAllWindows()
+            if key == 27:
+                break
+        sys.exit(0)
+
+    # Default: run selected frame or all via --index
     if args.index.lower() == "all":
-        for img_path in (Path(args.left_dir).glob("*.png")):  #  optional  sorted to see the cyclist first
-            process_frame(img_path.stem, args)
+        print("[INFO] Running all frames from left_dir...")
+        for img_path in sorted(Path(args.left_dir).glob("*.png")):
+            frame=process_frame(img_path.stem, args)
+            show_frame(frame, title="Processed Frame")
+            
     else:
-        process_frame(args.index, args)
+        print(f"[INFO] Running single frame: {args.index}")
+        frame=process_frame(args.index, args)
+        show_frame(frame, title="Processed Frame")
+
