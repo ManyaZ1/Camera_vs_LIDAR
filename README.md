@@ -31,7 +31,7 @@ python camera_complete.py --index 000000 --video
 
 `--kitti`: Διατρέχει όλο το KITTI training dataset (default επιλογή)
 
-`--testing``: Διατρέχει όλο το KITTI testing dataset 
+`--testing`: Διατρέχει όλο το KITTI testing dataset 
 
 `--video`: Δείχνει σε βίντεο τα αποτελέσματα Live και αποθηκεύει το βίντεο στο ίδιο directory με το script
 
