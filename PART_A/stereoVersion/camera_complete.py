@@ -21,7 +21,6 @@ def get_args() -> argparse.Namespace:
     p.add_argument("--yolo_names", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/stereoVersion/coco.names")
     p.add_argument("--conf", type=float, default=0.5, help="YOLO confidence threshold")
     p.add_argument("--nms_thresh", type=float, default=0.4, help="YOLO NMS threshold")
-    
     # Modes
     p.add_argument("--kitti", action="store_true", help="Run over full training set")
     p.add_argument("--wall", action="store_true", help="Run wall detection test")
@@ -569,23 +568,10 @@ def run_wall_test():
         show_frame(frame, title="Processed Frame")
         
 
-# def run_video_playback(args, fps=25):
-#     #delay = int(1000 / fps)  # Convert FPS to milliseconds
-#     delay=1
-#     frame_paths = sorted(Path(args.left_dir).glob("*.png"))
-#     for f in frame_paths:
-#         idx = f.stem
-#         print(f"[INFO] Video mode: {idx}")
-#         frame = process_frame(idx, args)
-#         if frame is None:
-#             continue
-#         cv2.imshow("Camera Lane Detection (Video Mode)", frame)
-#         if cv2.waitKey(delay) == 27:  # ESC to quit early
-#             break
-
-#     cv2.destroyAllWindows()
-
 def show_frame(frame, title="Processed Frame"):
+    if frame is None:
+        print("[WARN] Empty frame passed to show_frame. Skipping display.")
+        return
     cv2.imshow(title, frame)
     key = cv2.waitKey(0)
     cv2.destroyAllWindows()
@@ -594,7 +580,7 @@ def show_frame(frame, title="Processed Frame"):
 
 
 # TO DO RUN ON SELECTED FRAMES
-
+import time
 if __name__ == "__main__":
     args = get_args()
     yolo_net, yolo_classes, yolo_layers = load_yolo(args.yolo_cfg, args.yolo_weights, args.yolo_names)
@@ -622,7 +608,10 @@ if __name__ == "__main__":
         print("[INFO] Interactive mode over full KITTI training set")
         for img_path in sorted(Path(args.left_dir).glob("*.png")):
             idx = img_path.stem
+            start = time.time()
             frame = process_frame(idx, args)
+            end = time.time()
+            print(f"[INFO] Frame {args.index} processed in {end - start:.2f} seconds.")
             if frame is None:
                 continue
             cv2.imshow("KITTI Training (Interactive)", frame)
@@ -640,7 +629,10 @@ if __name__ == "__main__":
         args.calib_dir = args.calib_dir.replace("training", "testing")
         for img_path in sorted(Path(args.left_dir).glob("*.png")):
             idx = img_path.stem
+            start = time.time()
             frame = process_frame(idx, args)
+            end = time.time()
+            print(f"[INFO] Frame {args.index} processed in {end - start:.2f} seconds.")
             if frame is None:
                 continue
             cv2.imshow("KITTI Testing (Interactive)", frame)

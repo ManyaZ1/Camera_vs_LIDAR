@@ -14,10 +14,9 @@ def get_args() -> argparse.Namespace:
     p.add_argument("--calib_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/calib")
     p.add_argument("--left_dir",  default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2")
     p.add_argument("--right_dir", default="C:/Users/USER/Documents/_CAMERA_LIDAR/data_road_right/training/image_3")
-    p.add_argument("--yolo_cfg", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/yolov3.cfg")
-    
-    p.add_argument("--yolo_weights", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/yolov3.weights")
-    p.add_argument("--yolo_names", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/version2_dbsacan_yolo/coco.names")
+    p.add_argument("--yolo_cfg", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/stereoVersion/yolov3.cfg")
+    p.add_argument("--yolo_weights", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/stereoVersion/yolov3.weights")
+    p.add_argument("--yolo_names", default="C:/Users/USER/Documents/GitHub/Camera_vs_LIDAR/PART_A/stereoVersion/coco.names")
     p.add_argument("--conf", type=float, default=0.5, help="YOLO confidence threshold")
     p.add_argument("--nms_thresh", type=float, default=0.4, help="YOLO NMS threshold")
     return p.parse_args()

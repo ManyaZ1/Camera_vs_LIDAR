@@ -907,18 +907,60 @@ def run_interactive(file_list, args):
         else:
             print(f"[MISSING] {f}")
     cv2.destroyAllWindows()
+def run_video_playback(file_list, args, delay=1, save_path="output_video.avi", save_fps=10):
+    import os
+    import time
 
-def run_video_playback(file_list, args, delay=100):
+    # Ensure output directory exists
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    writer = None
+    first_written = False
+
     for f in file_list:
-        if f.exists():
-            img, _ = process_frame_improved(f, args)
-            cv2.imshow("KITTI Video Mode", img)
-            key = cv2.waitKey(delay)
-            if key == 27:  # ESC to break
-                break
-        else:
+        if not f.exists():
             print(f"[MISSING] {f}")
+            continue
+
+        img, _ = process_frame_improved(f, args)
+
+        # Initialize writer once
+        if save_path and not first_written:
+            height, width = img.shape[:2]
+            writer = cv2.VideoWriter(
+                str(save_path),
+                cv2.VideoWriter_fourcc(*'XVID'),
+                save_fps,
+                (width, height)
+            )
+            first_written = True
+
+        # Save to video file
+        if writer:
+            writer.write(img)
+
+        # Show live (as fast as possible or fixed delay)
+        cv2.imshow("KITTI Live Video", img)
+        if cv2.waitKey(delay) == 27:  # ESC
+            break
+
+    if writer:
+        writer.release()
+        print(f"[INFO] Saved video to {save_path}")
     cv2.destroyAllWindows()
+
+# def run_video_playback(file_list, args, delay=100):
+#     for f in file_list:
+#         if f.exists():
+#             img, _ = process_frame_improved(f, args)
+#             cv2.imshow("KITTI Video Mode", img)
+#             key = cv2.waitKey(delay)
+#             if key == 27:  # ESC to break
+#                 break
+#         else:
+#             print(f"[MISSING] {f}")
+#     cv2.destroyAllWindows()
 
 def run_video_mode(file_list, args, output_path="output_video.avi"):
     first_img = None
@@ -978,7 +1020,10 @@ if __name__ == '__main__':
         #     else:
         #         print(f"missing {f}")
         if a.video:
-            run_video_playback(files, a, delay=1)
+            cur_dir = Path(__file__).parent
+            output_dir = cur_dir / "output_video.avi"
+            run_video_playback(files, a, delay=1, save_path=output_dir, save_fps=4)
+            #run_video_playback(files, a, delay=1)
             
         else:
             run_interactive(files, a)

@@ -22,3 +22,7 @@ PART_A/stereoVersion/yolov3.weights
 PART_A/stereoVersion/coco.names
 PART_A/stereoVersion/output_video_16fps.avi
 *.avi
+/PART_B/road_results
+report_LIDAR_camera_up1096060v1.pdf
+*.docx
+/PART_B/lane_results

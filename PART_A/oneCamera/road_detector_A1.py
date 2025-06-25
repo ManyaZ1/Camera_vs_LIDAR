@@ -418,7 +418,7 @@ def detect_road(img,imgpath=None,debug=False):
 
 def detect_road_lab(img):
     #print(f"[INFO] Detecting road using Lab method for {img}")
-    dbg = True          # set True while tuning
+    dbg = True          
 
     # ---------- 0. preprocess & ROI ------------------
     h, w = img.shape[:2]
@@ -574,7 +574,8 @@ def split_lanes(image, road_hull_mask, hull, gc_mask,outpath=None,imgpath=None):
     slope_thresh=0.1
     final_lines = []
     min_dist=abs(w//2-mask_center_x )#initial min distance
-    best_line = [w//2, h, w//2, h//2] #default line in the middle of the image
+    best_line = None
+    #best_line = [w//2, h, w//2, h//2] #default line in the middle of the image
     for line in lines:
         x1, y1, x2, y2 = line[0]
         slope1 = (y2 - y1) / (x2 - x1 + 1e-5)
@@ -586,6 +587,9 @@ def split_lanes(image, road_hull_mask, hull, gc_mask,outpath=None,imgpath=None):
                 best_line = line[0] 
     left_mask = np.zeros_like(road_hull_mask)
     right_mask = np.zeros_like(road_hull_mask)
+    if best_line is None:
+        print("[ERROR] No suitable line found.")
+        return image
     x1, y1, x2, y2 = best_line
     center_line = [(x1, y1), (x2, y2)]
     road_mask = road_hull_mask
@@ -871,7 +875,7 @@ def detect_lanes_old(image, road_hull_mask, hull, gc_mask,out=None):
 def road_tester():
     input_folder=r'C:/Users/USER/Documents/_CAMERA_LIDAR/image_2'
     for filename in os.listdir(input_folder):
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg')) and filename == "um_000009.png" :
             img_path = os.path.join(input_folder, filename)
             image = cv2.imread(img_path)
 
@@ -890,7 +894,7 @@ def large_tester():
     input_folder = r'C:/Users/USER/Documents/_CAMERA_LIDAR/code/training/image_2/'  # π.χ. './images'
     
     for filename in os.listdir(input_folder):
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg')) :
             img_path = os.path.join(input_folder, filename)
             image = cv2.imread(img_path)
 
@@ -908,22 +912,51 @@ def large_tester():
             #find_edges(image)
             end=time.time()
             print(f"Time taken: {end-start:.2f} seconds")
+def hardtester():
+    cur_script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_folder = os.path.join(cur_script_dir, 'hardtester') 
+    for filename in os.listdir(input_folder):
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            img_path = os.path.join(input_folder, filename)
+            image = cv2.imread(img_path)
 
+            if image is None:
+                print(f"Could not load thimage {filename}")
+                continue
+            print(f"Processing image: {filename}")
+            start=time.time()
+            out,road_hull_mask, hull, gc_mask = detect_road(image, imgpath=None, debug=False)
+            end=time.time()
+            print(f"Time taken: {end-start:.2f} seconds")
+            cv2.imshow('Road hull overlay', out)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+        
 if __name__ == "__main__":
     import os
     import time
-    
-    road_tester()
-    #large_tester()
-    imgpath=os.path.join(os.getcwd(), 'hardtester/um_000045.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
-    # "um_000040.png" 
-    image = cv2.imread(imgpath)
-    if image is None:
-        print("Error loading image")
-    #     exit(1)
-    detect_road_lab(image)
-    out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=None, debug=True)
-    split_lanes(image, road_hull_mask, hull, gc_mask)
+    x=int(input("Chose mode 1: hard tester, 2: road tester, 3: large tester: "))
+    if x==1:
+        print("running hard tester")
+        hardtester()  # Test with hard images
+    if x==2:
+        print("running road tester")
+        road_tester()  # KITTI dataset training road_data
+    if (x)==3:
+        print("running large tester")
+        large_tester() #other kitti images hard
+
+    # cur_script_dir = os.path.dirname(os.path.abspath(__file__))
+    # imgpath=os.path.join(cur_script_dir, 'hardtester/um_000045.png')  # '000163.png','000221.png' , '000313.png', '000689.png', '001842.png'
+    # print(f"Testing image: {imgpath}")
+    # # "um_000040.png" 
+    # image = cv2.imread(imgpath)
+    # if image is None:
+    #     print("Error loading image")
+    # #     exit(1)
+    #detect_road_lab(image)
+    # out, road_hull_mask, hull, gc_mask=detect_road(image, imgpath=None, debug=True)
+    # split_lanes(image, road_hull_mask, hull, gc_mask)
     #detect_lanes(image, road_hull_mask, hull, gc_mask,out)
     #detect_lanes_colored(image, road_hull_mask, hull, gc_mask, out=None)
     #detect_lanes_og(image)
