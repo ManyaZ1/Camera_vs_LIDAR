@@ -9,48 +9,30 @@ pip install opencv-python==4.5.5.64
 pip install numpy==1.26.4
 ```
 
-## Current Progress
+Σύστημα ανίχνευσης δρόμου και εμποδίων με χρήση LIDAR και Stereo Camera (KITTI dataset).
 
-## Part A
+### Δομή
+- `PART_A/oneCamera/`: One camera road detection + Disparity Obstacle detection
+- `PART_A/stereoVersion`: Stereo + YOLO pipeline (Περιέχει YOLO config + βάρη)
+- `PART_B/lidar_complete.py`: LIDAR-based pipeline
 
-## Version 1
-road-lane-obstacle detection using only computer vision and color spaces without ransac:
 
-`road_detector_A1.py `
-`obstacle_detection_cv_A2.py`
+### Τρέξιμο
 
-## Version 2
-road-lane-obstacle detection using yolo an disparity-ransac: partA1A2.py
+**Προσοχή**: Τα αρχεία lidar_complete.py, camera_complete.py παίνρουν ως argumements τα dierectories του KITTI dataset και του yolov3. Τα args δίνονται είτε από command line, είτε μπορούν να γίνουν set ως default στην αρχή του αρχείου στη συνάρτηση `def get_args() -> argparse.Namespace:`
 
-**TO DO**
-1. make mask more trapezoidal => improve the functions
-2. add lanes
-
-## Part B
-### q1,2,3:
-B1B2clean.py current version, B123_length exp
-
-**TO DO**
-1. improve the sidewalk removal!
-change this part =>**apply better logic** (more details in B1IDEAS.py)
-**αλλαξε τα percntile?**
-'''
-
-  /    *  |
- /         \
-/    *      \
-line between two stars as boundary 
-'''
-``` 
-    # Median y of road
-    #road_center_y = np.median(main_road[:, 1]) if len(main_road) > 0 else 0
-    road_center_y=0 # τωρα => επαρκες
-    left_rough = rough_points[rough_points[:, 1] < road_center_y]
-    right_rough = rough_points[rough_points[:, 1] > road_center_y]
+Παράδειγμα εκτέλεσης:
+```bash
+python lidar_complete.py --index 000000 --calib_dir=... --...
+python camera_complete.py --index 000000 --video
 ```
-2. length feature of vector
 
-3. bonus: classify obstacles
+**Επιλογές** (για lidar_complete.py, camera_complete.py):
+`--kitti`: Διατρέχει όλο το KITTI training dataset (default επιλογή)
+`--testing``: Διατρέχει όλο το KITTI testing dataset 
+`--video`: Δείχνει σε βίντεο τα αποτελέσματα Live και αποθηκεύει το βίντεο στο ίδιο directory με το script
+`--wall`: Ανίχνευση τοίχου με τα πειραγμένα αρχεία
+
 
 
 
