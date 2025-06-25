@@ -37,6 +37,12 @@ python camera_complete.py --index 000000 --video
 
 `--wall`: Ανίχνευση τοίχου με τα πειραγμένα αρχεία
 
+### Results-Videos:
+
+Part_A1-2-3 video (stereo camera version): https://www.youtube.com/watch?v=5cIPDILlWHs 
+
+Part_B1-2-3 video (lidar version): https://youtu.be/IFZvKo8ArFE
+
 
 
 
