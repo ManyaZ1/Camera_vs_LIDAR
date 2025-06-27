@@ -892,6 +892,13 @@ def run_wall_test():
     for f in files:
         if f.exists():
             process_frame_improved(f, a)
+            # αυτό ξέχασα να το βάλω στο eclass (το show)
+            img, _ = process_frame_improved(f, a)
+            cv2.imshow("Selected Frame Viewer", img)
+            key = cv2.waitKey(0)
+            cv2.destroyAllWindows()  
+            if key == 27:  # ESC to exit early
+                break
         else:
             print(f"missing {f}")
 

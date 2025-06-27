@@ -873,9 +873,10 @@ def detect_lanes_old(image, road_hull_mask, hull, gc_mask,out=None):
 
 
 def road_tester():
-    input_folder=r'C:/Users/USER/Documents/_CAMERA_LIDAR/image_2'
+    #input_folder=r'C:/Users/USER/Documents/_CAMERA_LIDAR/image_2'
+    input_folder=r'C:/Users/USER/Documents/_CAMERA_LIDAR/data_road/training/image_2'  # π.χ. './images'
     for filename in os.listdir(input_folder):
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg')) and filename == "um_000009.png" :
+        if filename.lower().endswith(('.png', '.jpg', '.jpeg')) :
             img_path = os.path.join(input_folder, filename)
             image = cv2.imread(img_path)
 
